@@ -18,7 +18,7 @@ its node's voltage quantity.
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-from el.quantity import Law, Quantity, Ref, Value
+from el.quantity import ACTIVE, DEFAULT, Law, Quantity, Ref, Value
 
 
 @dataclass(frozen=True)
@@ -119,8 +119,65 @@ class Resistor(Element):
         return [Law("OHM", (v1, v2, self.ref("RESISTANCE"), self.ref("CURRENT", "ME")), _ohm)]
 
 
+def _be(target: int, values: list[Value | None]) -> Value | None:
+    """vb - ve = vbe, in the ACTIVE region only. Never solves for the region."""
+    vb, ve, vbe, region = values
+    if region != ACTIVE:
+        return None
+    match target:
+        case 0:
+            return ve + vbe
+        case 1:
+            return vb - vbe
+        case 2:
+            return vb - ve
+    return None
+
+
+def _transistor_currents(target: int, values: list[Value | None]) -> Value | None:
+    """Ib + Ie + Ic = 0: the currents into the three terminals."""
+    return -sum(v for i, v in enumerate(values) if i != target)
+
+
+@dataclass(eq=False)
+class Transistor(Element):
+    """A bipolar transistor in EL's simple model. `vbe` is signed: positive
+    for NPN, negative for PNP (.6 silicon, .3 germanium).
+
+    VBE is a Given; the base current is a Default of 0; the operating region
+    is a hidden Default of ACTIVE (ADR 0001), read by BE. The three terminal
+    currents are separate quantities tied by the transistor current law."""
+
+    vbe: float = 0.0
+    TERMINALS: ClassVar[tuple[str, ...]] = ("B", "E", "C")
+
+    @classmethod
+    def declare(cls, name: str, value: float) -> Transistor:
+        return cls(name, vbe=float(value))
+
+    def _quantities(self) -> list[Quantity]:
+        vbe = Quantity(self.name, "VBE")
+        vbe.premise(self.vbe)
+        base = Quantity(self.name, "CURRENT", "B")
+        base.premise(0.0, DEFAULT)
+        region = Quantity(self.name, "REGION", hidden=True)
+        region.premise(ACTIVE, DEFAULT)
+        emitter = Quantity(self.name, "CURRENT", "E")
+        collector = Quantity(self.name, "CURRENT", "C")
+        return [vbe, region, base, emitter, collector]
+
+    def make_laws(self, circuit: Circuit) -> list[Law]:
+        vb, ve = (circuit.node_at(Terminal(self.name, t)).ref("VOLTAGE") for t in ("B", "E"))
+        currents = tuple(self.ref("CURRENT", t) for t in ("B", "E", "C"))
+        return [
+            Law("BE", (vb, ve, self.ref("VBE"), self.ref("REGION")), _be),
+            Law("TRANSISTOR", currents, _transistor_currents),
+        ]
+
+
 ELEMENT_TYPES: dict[str, type[Element]] = {
     "RESISTOR": Resistor,
+    "TRANSISTOR": Transistor,
 }
 
 
