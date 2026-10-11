@@ -75,16 +75,23 @@ def test_contradiction_on_a_deduced_quantity_shows_its_derivation():
     ]
 
 
+CHAIN_QUANTITIES = [
+    *(f"{n} voltage" for n in ("vcc", "base", "emit", "node1")),
+    *(f"{q} {k}" for q in ("q1", "q2") for k in ("vbe", "current b", "current e", "current c")),
+]
+
+
 def test_after_a_contradiction_only_the_reported_fills_are_made():
     session, result = analyze(DEDUCED_CLASH, "chain")
     assert isinstance(result, Contradiction), result.render()
-    reported = {id(fill.ref.quantity) for fill in result.fills}
-    deduced = {
-        id(q)
-        for part in result.circuit.parts()
-        for q in part.quantities.values()
-        if q.filled and not q.justification.is_premise
-    }
+    reported = {fill.render().rsplit(" ", 1)[0] + ")" for fill in result.fills}
+    deduced = set()
+    for name in CHAIN_QUANTITIES:
+        [why] = session.run(f"(why {name})")
+        first = why.render().splitlines()[0]
+        if " <= " in first:
+            deduced.add(first[1 : first.index(" <= ")])
+    assert reported
     assert deduced == reported
 
 

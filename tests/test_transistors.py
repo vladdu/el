@@ -87,54 +87,71 @@ def test_germanium_transistor_uses_its_smaller_drop():
     )
 
 
+def npn_session():
+    session = Session()
+    session.run(NPN)
+    session.run("(analyze 'npn)")
+    return session
+
+
+def answers(session, *commands):
+    return [result.render() for c in commands for result in session.run(c)]
+
+
 def test_vbe_is_a_given_and_base_current_a_default_of_zero():
-    q1 = analyze(NPN, "npn").circuit.part("Q1")
-    vbe, base = q1.ref("VBE").quantity, q1.ref("CURRENT", "B").quantity
-    assert (vbe.value, vbe.justification.law, vbe.justification.antecedents) == (0.6, "GIVEN", ())
-    assert (base.value, base.justification.law, base.justification.antecedents) == (
-        0.0,
-        "DEFAULT",
-        (),
-    )
+    assert answers(
+        npn_session(), "(what q1 vbe)", "(why q1 vbe)", "(what q1 current b)", "(why q1 current b)"
+    ) == ["0.6", "((Q1 VBE) GIVEN)\nQED", "0.0", "((Q1 CURRENT B) DEFAULT)\nQED"]
 
 
-def test_be_deduction_records_the_hidden_active_region_as_an_antecedent():
-    circuit = analyze(NPN, "npn").circuit
-    region = circuit.ref("Q1", "REGION").quantity
-    assert (region.value, region.justification.law, region.hidden) == ("ACTIVE", "DEFAULT", True)
-    emitter = circuit.ref("NODE1", "VOLTAGE").quantity.justification
-    assert emitter.law == "BE"
-    assert {r.name for r in emitter.antecedents} == {
-        ("BASE", "VOLTAGE"),
-        ("Q1", "VBE"),
-        ("Q1", "REGION"),
-    }
-    assert [r.name for r in emitter.antecedents if not r.quantity.hidden] == [
-        ("BASE", "VOLTAGE"),
-        ("Q1", "VBE"),
+def test_region_is_a_default_of_active_left_out_of_be_explanations():
+    session = npn_session()
+    assert answers(session, "(what q1 region)", "(why q1 region)") == [
+        "ACTIVE",
+        "((Q1 REGION) DEFAULT)\nQED",
     ]
+    [why] = answers(session, "(why node1 voltage)")
+    assert why.splitlines()[0] == "((NODE1 VOLTAGE) <= ((BASE VOLTAGE) (Q1 VBE)) - BE)"
+
+
+# NPN with a PNP partner QP whose emitter shares NODE1, under a `cp` hint:
+# the pair's region is unknown, so BE no longer puts NODE1 at 1.4.
+NPN_IN_A_PAIR = """
+(wire npn
+  (node (vcc 10) (gnd 0) (base 2) pb)
+  (transistor (q1 .6) (qp -.6))
+  (resistor (r1 1000) (r2 1000))
+  (connect
+    (vcc (#1 r1))
+    (base (b q1))
+    ((e q1) (e qp) (#1 r2))       ;NODE1
+    ((c q1) (#2 r1))              ;NODE2
+    (gnd (#2 r2) (c qp))
+    (pb (b qp)))
+  (hint (cp q1 qp)))
+"""
 
 
 def test_without_an_active_region_be_deduces_nothing():
-    # Stands in for a `cp` hint (ticket 09), which makes the region unknown.
     session = Session()
-    session.run(NPN)
-    region = session.circuits["NPN"].ref("Q1", "REGION").quantity
-    region.value = region.justification = None
-    [result] = session.run("(analyze 'npn)")
-    assert result.render() == "DONE"
+    session.run(NPN_IN_A_PAIR)
+    [analysis] = session.run("(analyze 'npn)")
+    assert isinstance(analysis, Analysis), analysis.render()
+    assert "(NODE1 VOLTAGE 1.4)" not in analysis.render().splitlines()
+    for quantity in ("node1 voltage", "pb voltage"):
+        [why] = session.run(f"(why {quantity})")
+        assert "- BE)" not in why.render()
 
 
 def test_emitter_and_collector_currents_are_separate_quantities():
-    circuit = analyze(NPN, "npn").circuit
-    emitter = circuit.ref("Q1", "CURRENT", "E").quantity
-    collector = circuit.ref("Q1", "CURRENT", "C").quantity
-    assert emitter is not collector
-    assert collector.justification.law == "TRANSISTOR"
-    assert {r.name for r in collector.justification.antecedents} == {
-        ("Q1", "CURRENT", "B"),
-        ("Q1", "CURRENT", "E"),
-    }
+    session = npn_session()
+    [why] = answers(session, "(why q1 current c)")
+    assert why.splitlines()[0] == (
+        "((Q1 CURRENT C) <= ((Q1 CURRENT B) (Q1 CURRENT E)) - TRANSISTOR)"
+    )
+    [change] = answers(session, "(change q1 current b 1.0E-4)")
+    assert "(Q1 CURRENT C 1.3E-3)" in change.splitlines()
+    assert answers(session, "(what q1 current e)") == ["-1.4E-3"]
 
 
 def test_load_time_checks_cover_transistor_terminals():
