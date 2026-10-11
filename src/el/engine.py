@@ -31,7 +31,9 @@ returns `FRESH`): that is how a macro-element's demon introduces one.
 
 Each fill records itself as a dependent of every quantity it read, so
 `retract` can forget a quantity and, transitively, everything deduced from
-it (`change`).
+it (`change`). A change that ends in a contradiction is undone: `snapshot`
+records the state before it, and restoring puts every quantity, formal
+variable and pending equation back as it was.
 """
 
 from collections.abc import Callable
@@ -40,6 +42,7 @@ from el.circuit import Circuit, Part
 from el.expr import Expr, NonLinear, substitute
 from el.quantity import (
     FRESH,
+    GIVEN,
     FormalVariable,
     Justification,
     Law,
@@ -224,6 +227,62 @@ def retract(quantity: Quantity) -> list[Quantity]:
         q.forget()
         retracted.append(q)
     return retracted
+
+
+def change(engine: Engine, ref: Ref, value: Value) -> list[Fill]:
+    """Replace the premise `ref` with the Given `value`: retract it and
+    everything deduced from it, wake every part that owned a retracted
+    quantity, fill the new value and propagate. Raises `Contradicted`, leaving
+    the circuit as the failed check found it (see `snapshot`)."""
+    for retracted in reversed(retract(ref.quantity)):
+        if isinstance(retracted, Quantity):
+            for owner in reversed(retracted.owners):
+                engine.wake(owner)
+    engine.fill(ref, value, Justification(GIVEN))
+    return engine.run()
+
+
+def snapshot(circuit: Circuit) -> Callable[[], None]:
+    """Record the state of every quantity of `circuit` and of every formal
+    variable and pending equation reachable from them. Returns a function
+    that restores exactly that state (undoing a `change`)."""
+    quantities: dict[int, tuple] = {}
+    equations: dict[int, tuple] = {}
+    todo: list[Quantity | PendingEquation] = [
+        q for part in circuit.parts() for q in part.quantities.values()
+    ]
+    while todo:
+        item = todo.pop()
+        if id(item) in quantities or id(item) in equations:
+            continue
+        if item.justification is not None:
+            todo += [a.quantity for a in item.justification.antecedents]
+        if isinstance(item, PendingEquation):
+            equations[id(item)] = (item, item.justification)
+            todo += item.expr.variables
+            continue
+        pending = list(item.pending) if isinstance(item, FormalVariable) else []
+        quantities[id(item)] = (
+            item,
+            item.value,
+            item.justification,
+            list(item.dependents),
+            pending,
+        )
+        todo += item.dependents + pending
+        if isinstance(item.value, Expr):
+            todo += item.value.variables
+
+    def restore() -> None:
+        for equation, justification in equations.values():
+            equation.justification = justification
+        for quantity, value, justification, dependents, pending in quantities.values():
+            quantity.value, quantity.justification = value, justification
+            quantity.dependents = list(dependents)
+            if isinstance(quantity, FormalVariable):
+                quantity.pending = list(pending)
+
+    return restore
 
 
 def propagate(circuit: Circuit, engine: Engine | None = None) -> list[Fill]:

@@ -7,12 +7,13 @@ loop over this.
 
 import itertools
 from collections.abc import Callable
+from dataclasses import replace
 
 from el import engine
 from el.circuit import Circuit
 from el.expr import Expr, substitute
 from el.loader import WiringError, load
-from el.quantity import GIVEN, FormalVariable, Justification, PendingEquation
+from el.quantity import REGION, FormalVariable, Justification, PendingEquation, Ref
 from el.reader import QUOTE, Datum, ReadError, Symbol, read_all
 from el.results import (
     Analysis,
@@ -20,6 +21,7 @@ from el.results import (
     Contradiction,
     Equation,
     Error,
+    Fill,
     LoadError,
     Result,
     Unfilled,
@@ -92,24 +94,33 @@ class Session:
             return _contradiction(circuit, c)
         return Analysis(circuit, fills)
 
-    def _what(self, form: list[Datum]) -> Result:
-        """`(what part kind [label])`: the quantity's value. If it is not
-        filled, wishful thinking: fill it with a fresh formal variable,
-        propagate, and answer with whatever that leads to."""
-        match form:
-            case [_, Symbol() as part, Symbol() as kind]:
+    def _quantity(self, args: list[Datum], usage: str) -> tuple[Circuit, Ref] | Error:
+        """The current circuit and the quantity named by `args`, which are
+        `part kind [label]`; or the Error to report."""
+        match args:
+            case [Symbol() as part, Symbol() as kind]:
                 label = None
-            case [_, Symbol() as part, Symbol() as kind, Symbol() as label]:
+            case [Symbol() as part, Symbol() as kind, Symbol() as label]:
                 pass
             case _:
-                return Error("usage: (what part kind [label])")
+                return Error(f"usage: {usage}")
         circuit = self.current
         if circuit is None:
             return Error("no circuit analyzed yet")
         try:
-            ref = circuit.ref(part, kind, label)
+            return circuit, circuit.ref(part, kind, label)
         except KeyError:
-            return Error(f"no quantity {part} {kind}{f' {label}' if label else ''}")
+            name = " ".join(s for s in (part, kind, label) if s)
+            return Error(f"{circuit.name} has no quantity ({name})")
+
+    def _what(self, form: list[Datum]) -> Result:
+        """`(what part kind [label])`: the quantity's value. If it is not
+        filled, wishful thinking: fill it with a fresh formal variable,
+        propagate, and answer with whatever that leads to."""
+        found = self._quantity(form[1:], "(what part kind [label])")
+        if isinstance(found, Error):
+            return found
+        circuit, ref = found
         fills = []
         if not ref.filled:
             run = self._engine()
@@ -123,64 +134,42 @@ class Session:
 
     def _why(self, form: list[Datum]) -> Result:
         """`(why part kind [label])` on the current circuit."""
-        match form:
-            case [_, Symbol() as part, Symbol() as kind]:
-                label = None
-            case [_, Symbol() as part, Symbol() as kind, Symbol() as label]:
-                pass
-            case _:
-                return Error("usage: (why part quantity [terminal])")
-        circuit = self.current
-        if circuit is None:
-            return Error("no circuit analyzed yet")
-        try:
-            ref = circuit.ref(part, kind, label)
-        except KeyError:
-            name = " ".join(s for s in (part, kind, label) if s)
-            return Error(f"{circuit.name} has no quantity ({name})")
+        found = self._quantity(form[1:], "(why part kind [label])")
+        if isinstance(found, Error):
+            return found
+        circuit, ref = found
         return Why.of(circuit, ref) if ref.filled else Unfilled(ref)
 
     def _change(self, form: list[Datum]) -> Result:
-        """`(change part kind [label] value)`: replace a premise's value.
-        Retract it and everything deduced from it, wake every part that owned
-        a retracted quantity, fill the new value as a Given, and propagate.
-        Reports the new premise and the quantities filled again."""
+        """`(change part kind [label] value)`: replace a premise's value
+        (`engine.change`). Reports the new premise and the quantities filled
+        again. A change that leads to a contradiction is undone."""
+        usage = "(change part kind [label] value)"
         match form:
-            case [_, Symbol() as part, Symbol() as kind, int() | float() as value]:
-                label = None
-            case [
-                _,
-                Symbol() as part,
-                Symbol() as kind,
-                Symbol() as label,
-                int() | float() as value,
-            ]:
-                pass
+            case [_, *args, int() | float() as value]:
+                found = self._quantity(args, usage)
             case _:
-                return Error("usage: (change part kind [label] value)")
-        circuit = self.current
-        if circuit is None:
-            return Error("no circuit analyzed yet")
-        name = " ".join(s for s in (part, kind, label) if s)
-        try:
-            ref = circuit.ref(part, kind, label)
-        except KeyError:
-            return Error(f"{circuit.name} has no quantity ({name})")
+                return Error(f"usage: {usage}")
+        if isinstance(found, Error):
+            return found
+        circuit, ref = found
+        name = f"({' '.join(ref.name)})"
+        if ref.quantity.kind == REGION:
+            return Error(
+                f"{name} is an operating region; switching transistor models is not supported"
+            )
         justification = ref.quantity.justification
         if justification is None or not justification.is_premise:
             how = "has no value" if justification is None else f"is deduced by {justification.law}"
-            return Error(
-                f"({name}) is not a premise: it {how}; only Givens and Defaults can change"
-            )
-        run = self._engine()
-        for quantity in reversed(engine.retract(ref.quantity)):
-            for owner in reversed(quantity.owners):
-                run.wake(owner)
-        run.fill(ref, float(value), Justification(GIVEN))
+            return Error(f"{name} is not a premise: it {how}; only Givens and Defaults can change")
+        old = Fill(ref, ref.value)
+        restore = engine.snapshot(circuit)
         try:
-            fills = run.run()
+            fills = engine.change(self._engine(), ref, float(value))
         except engine.Contradicted as c:
-            return _contradiction(circuit, c)
+            report = _contradiction(circuit, c)
+            restore()
+            return replace(report, undone=old)
         return Analysis(circuit, fills)
 
 
@@ -201,5 +190,4 @@ def _pending(value: object) -> tuple[Equation, ...]:
 
 
 def _contradiction(circuit: Circuit, c: engine.Contradicted) -> Contradiction:
-    refs = tuple(r for r in c.law.refs if not r.quantity.hidden)
-    return Contradiction(circuit, c.fills, c.law.name, refs)
+    return Contradiction.of(circuit, c.fills, c.law.name, c.law.refs)

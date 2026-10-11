@@ -29,9 +29,12 @@ type Value = float | Expr
 GIVEN = "GIVEN"
 DEFAULT = "DEFAULT"
 
-# Operating region values (ADR 0001). A region-dependent law solves only when
-# its region quantity reads ACTIVE.
+# A transistor's operating region quantity (ADR 0001) and its values. A
+# region-dependent law solves only when the region reads ACTIVE; a `cp` hint
+# makes it UNKNOWN.
+REGION = "REGION"
 ACTIVE = "ACTIVE"
+UNKNOWN = "UNKNOWN"
 
 
 @dataclass(frozen=True)

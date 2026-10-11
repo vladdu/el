@@ -28,7 +28,7 @@ def test_be_drop_other_than_vbe_is_a_contradiction():
     _, result = analyze(BE_CLASH, "clash")
     assert isinstance(result, Contradiction), result.render()
     assert result.law == "BE"
-    names = {ref.name for ref in result.refs}
+    names = {c.fill.ref.name for c in result.conflicts}
     assert names == {("BASE", "VOLTAGE"), ("EMIT", "VOLTAGE"), ("Q1", "VBE")}
 
 
@@ -63,7 +63,7 @@ def test_contradiction_on_a_deduced_quantity_shows_its_derivation():
     _, result = analyze(DEDUCED_CLASH, "chain")
     assert isinstance(result, Contradiction), result.render()
     assert result.law == "BE"
-    [node1] = [r for r in result.refs if r.name == ("NODE1", "VOLTAGE")]
+    [node1] = [c.fill for c in result.conflicts if c.fill.ref.name == ("NODE1", "VOLTAGE")]
     assert node1.value == 1.4
     report = result.render().splitlines()
     report = report[report.index(";CONTRADICTION: law BE does not hold") :]

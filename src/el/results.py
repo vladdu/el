@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from el.checks import Problem
 from el.circuit import Circuit
 from el.expr import Expr
-from el.quantity import Ref, Value
+from el.quantity import Justification, Ref, Value
 
 
 class Result:
@@ -135,49 +135,57 @@ class LoadError(Result):
         return "\n".join([head, *(f";  {p.message}" for p in self.problems)])
 
 
-def _name(ref: Ref) -> str:
+def _render_name(ref: Ref) -> str:
     return f"({' '.join(ref.name)})"
 
 
-def _shown(ref: Ref) -> tuple[Ref, ...]:
-    """The antecedents of `ref`'s fill that `why` prints: hidden quantities (a
-    transistor's operating region, ADR 0001) are recorded but not shown."""
-    justification = ref.quantity.justification
-    assert justification is not None, f"{ref} is not filled"
+def _printed_antecedents(justification: Justification) -> tuple[Ref, ...]:
+    """The antecedents `why` prints: hidden quantities (a transistor's
+    operating region, ADR 0001) are recorded but not shown."""
     return tuple(a for a in justification.antecedents if not a.quantity.hidden)
 
 
-def _step(ref: Ref) -> str:
-    justification = ref.quantity.justification
-    assert justification is not None, f"{ref} is not filled"
-    if justification.is_premise:
-        return f"({_name(ref)} {justification.law})"
-    antecedents = " ".join(_name(a) for a in _shown(ref))
-    return f"({_name(ref)} <= ({antecedents}) - {justification.law})"
+@dataclass(frozen=True)
+class Step:
+    """One line of a `why` tree: a quantity and how it was filled."""
+
+    ref: Ref
+    justification: Justification
+
+    def render(self) -> str:
+        name, law = _render_name(self.ref), self.justification.law
+        if self.justification.is_premise:
+            return f"({name} {law})"
+        antecedents = " ".join(_render_name(a) for a in _printed_antecedents(self.justification))
+        return f"({name} <= ({antecedents}) - {law})"
 
 
 @dataclass(frozen=True)
 class Why(Result):
-    """The justification tree of a filled quantity: one step per quantity,
-    breadth first from `steps[0]` (the quantity asked about), each quantity
-    once, named as the first law that read it named it. Each step's
-    justification is `step.quantity.justification`."""
+    """The justification tree of a filled quantity, as it was when asked:
+    one step per quantity, breadth first from `steps[0]` (the quantity asked
+    about), each quantity once, named as the first law that read it named
+    it."""
 
     circuit: Circuit
-    steps: tuple[Ref, ...]
+    steps: tuple[Step, ...]
 
     @classmethod
     def of(cls, circuit: Circuit, root: Ref) -> Why:
-        steps, seen = [root], {id(root.quantity)}
-        for ref in steps:  # `steps` grows while iterating: breadth first
-            for antecedent in _shown(ref):
+        steps: list[Step] = []
+        refs, seen = [root], {id(root.quantity)}
+        for ref in refs:  # `refs` grows while iterating: breadth first
+            justification = ref.quantity.justification
+            assert justification is not None, f"{ref} is not filled"
+            steps.append(Step(ref, justification))
+            for antecedent in _printed_antecedents(justification):
                 if id(antecedent.quantity) not in seen:
                     seen.add(id(antecedent.quantity))
-                    steps.append(antecedent)
+                    refs.append(antecedent)
         return cls(circuit, tuple(steps))
 
     def render(self) -> str:
-        return "\n".join([*(_step(ref) for ref in self.steps), "QED"])
+        return "\n".join([*(step.render() for step in self.steps), "QED"])
 
 
 @dataclass(frozen=True)
@@ -187,26 +195,48 @@ class Unfilled(Result):
     ref: Ref
 
     def render(self) -> str:
-        return f"{_name(self.ref)} has no value"
+        return f"{_render_name(self.ref)} has no value"
+
+
+@dataclass(frozen=True)
+class Conflict:
+    """One quantity of a failed check: its value and `why` tree then."""
+
+    fill: Fill
+    why: Why
 
 
 @dataclass(frozen=True)
 class Contradiction(Result):
-    """`analyze` stopped because the filled quantities of law `law` disagree.
-    `refs` are the conflicting quantities (hidden ones, ADR 0001, left out),
-    each with its justification in `ref.quantity.justification`; `fills` are
-    the fills made before the failed check. Renders the fills, then each
+    """A law whose filled quantities disagree stopped propagation. `conflicts`
+    are its quantities (hidden ones, ADR 0001, left out), each with its value
+    and `why` tree at the failed check; `fills` are the fills made before it.
+    `undone` is set when the command was a `change` that was undone: the
+    premise with the value it has again. Renders the fills, then each
     conflicting quantity's value followed by its `why` tree, indented."""
 
     circuit: Circuit
     fills: list[Fill]
     law: str
-    refs: tuple[Ref, ...]
+    conflicts: tuple[Conflict, ...]
+    undone: Fill | None = None
+
+    @classmethod
+    def of(
+        cls, circuit: Circuit, fills: list[Fill], law: str, refs: tuple[Ref, ...]
+    ) -> Contradiction:
+        conflicts = tuple(
+            Conflict(Fill(r, r.value), Why.of(circuit, r)) for r in refs if not r.quantity.hidden
+        )
+        return cls(circuit, fills, law, conflicts)
 
     def render(self) -> str:
         lines = [fill.render() for fill in self.fills]
         lines.append(f";CONTRADICTION: law {self.law} does not hold")
-        for ref in self.refs:
-            lines.append(Fill(ref, ref.value).render())
-            lines.extend(f"  {_step(step)}" for step in Why.of(self.circuit, ref).steps)
+        for conflict in self.conflicts:
+            lines.append(conflict.fill.render())
+            lines.extend(f"  {step.render()}" for step in conflict.why.steps)
+        if self.undone is not None:
+            name = _render_name(self.undone.ref)
+            lines.append(f";CHANGE UNDONE: {name} is still {render_value(self.undone.value)}")
         return "\n".join(lines)
