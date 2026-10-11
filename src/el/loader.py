@@ -97,4 +97,5 @@ def _build(diagram: Diagram) -> Circuit:
         if connection.node is None:
             circuit.nodes[name] = Node(Symbol(name))
         circuit.nodes[name].terminals.extend(connection.terminals)
+    circuit.make_laws()
     return circuit

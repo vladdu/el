@@ -1,19 +1,29 @@
-"""Quantities, the names they are read and written under, and justifications.
+"""Quantities, the names they are read and written under, justifications, laws.
 
-A `Quantity` is one value cell of one part (NODE2's voltage, R4's current).
-A `Ref` is a signed name for a quantity: a resistor owns a single current
+A `Quantity` is one value of one part (NODE2's voltage, R4's current). A
+`Ref` is a signed name for a quantity: a resistor owns a single current
 quantity, named `ME`, which is also its `#1` current, and its `#2` current is
 the same quantity with the opposite sign. Laws read and fill quantities
 through refs, and fills and justifications remember which ref was used, so
-output can name a quantity the way the law that touched it saw it, as the
-memo does (`(R4 CURRENT ME ...)` from OHM, `(R3 CURRENT #2 ...)` from KCL).
+output names a quantity the way the law that touched it saw it, as the memo
+does (`(R4 CURRENT ME ...)` from OHM, `(R3 CURRENT #2 ...)` from KCL).
+
+A `Law` is an equation over refs, given as a solver for each of them. A law
+whose refs are all filled but one fills that one (if its solver can).
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from el.circuit import Part
 
 # A quantity's value. Numbers for now; linear expressions in formal variables
 # later (ticket 05). Laws only use +, -, unary -, and * or / by numbers on
-# values, so a value type supporting those plugs in unchanged.
+# values, so a value type supporting those plugs in unchanged. Non-numeric
+# values (e.g. an operating region, ADR 0001) are fine too: laws that read
+# them just compare them.
 type Value = float
 
 GIVEN = "GIVEN"
@@ -22,38 +32,43 @@ DEFAULT = "DEFAULT"
 
 @dataclass(frozen=True)
 class Justification:
-    """How a quantity was filled: by `law` from `antecedents`, or as a
-    premise (law GIVEN or DEFAULT, no antecedents)."""
+    """How a quantity was filled: by `law` from `antecedents` (the refs it
+    read), or as a premise (law GIVEN or DEFAULT, no antecedents)."""
 
     law: str
     antecedents: tuple[Ref, ...] = ()
 
     @property
     def is_premise(self) -> bool:
-        return not self.antecedents and self.law in (GIVEN, DEFAULT)
+        return self.law in (GIVEN, DEFAULT)
 
 
 @dataclass(eq=False)
 class Quantity:
-    """One value cell of one part, named canonically `(part kind [label])`.
+    """One value of one part, named canonically `(part kind [label])`.
 
     Identity matters: two quantities are equal only if they are the same
-    object. `consequences` lists the quantities whose justifications read this
-    one, for retraction."""
+    object. `owners` are the parts with a law over this quantity; filling it
+    wakes them."""
 
     part: str
     kind: str
     label: str | None = None
     value: Value | None = None
     justification: Justification | None = None
-    consequences: list[Quantity] = field(default_factory=list)
+    owners: list[Part] = field(default_factory=list)
 
     @property
     def filled(self) -> bool:
         return self.value is not None
 
+    def premise(self, value: Value, law: str = GIVEN) -> None:
+        """Fill as a premise (used when a circuit is built)."""
+        self.value = value
+        self.justification = Justification(law)
+
     def __repr__(self) -> str:
-        return f"Quantity({self.part} {self.kind}{f' {self.label}' if self.label else ''})"
+        return f"Quantity({' '.join(canonical_ref(self).name)})"
 
 
 @dataclass(frozen=True)
@@ -84,3 +99,19 @@ class Ref:
 
 def canonical_ref(quantity: Quantity) -> Ref:
     return Ref(quantity, quantity.label, 1)
+
+
+# solve(target, values): the value of refs[target] given `values`, the values
+# of all refs in order (values[target] is None), or None if this law cannot
+# deduce that ref (e.g. OHM cannot find a resistance from zero current).
+type Solver = Callable[[int, list[Value | None]], Value | None]
+
+
+@dataclass(eq=False)
+class Law:
+    """A relation among quantities, owned by one part, named as in `why`
+    output (OHM, KCL, ...)."""
+
+    name: str
+    refs: tuple[Ref, ...]
+    solve: Solver
