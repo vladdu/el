@@ -33,6 +33,17 @@ from el.quantity import FormalVariable, Justification, Law, Ref, Value
 from el.results import Fill
 
 
+class Contradicted(Exception):
+    """A law whose refs are all filled does not hold. Raised out of `run`;
+    nothing is filled by the failed check, so the circuit keeps the state it
+    had just before it. `fills` are the fills made before it."""
+
+    def __init__(self, law: Law, fills: list[Fill]) -> None:
+        super().__init__(law.name)
+        self.law = law
+        self.fills = fills
+
+
 class Engine:
     """One propagation run. Collects the fills it makes, in order.
     `new_variable` makes a fresh formal variable (numbered per session)."""
@@ -88,15 +99,24 @@ class Engine:
         self.fill(law.refs[target], value, Justification(law.name, antecedents))
 
     def _check(self, law: Law, values: list[Value | None], used: list[FormalVariable]) -> None:
-        """Consistency check of a law whose refs are all filled."""
+        """Consistency check of a law whose refs are all filled: raise
+        `Contradicted` if it fails, solve its one unsolved formal variable if
+        it has exactly one. A law that can predict none of its refs (BE
+        outside the ACTIVE region) checks nothing."""
         residual = _residual(law, values)
-        if not isinstance(residual, Expr):
-            # A numeric residual should be zero; contradictions are ticket 10.
+        if residual is None:
             return
-        if len(residual.variables) > 1:
+        actual, predicted = residual
+        difference = actual - predicted
+        if not isinstance(difference, Expr):
+            scale = max(_magnitude(actual), _magnitude(predicted))
+            if abs(difference) > 1e-12 + 1e-9 * scale:
+                raise Contradicted(law, self.fills)
+            return
+        if len(difference.variables) > 1:
             # More than one unsolved variable: a pending equation (ticket 11).
             return
-        variable, value = residual.solve()
+        variable, value = difference.solve()
         antecedents = law.refs + _varvals(used)
         self.fill(Ref(variable), value, Justification(law.name, antecedents))
 
@@ -110,16 +130,23 @@ def _solve(law: Law, target: int, values: list[Value | None]) -> Value | None:
         return None
 
 
-def _residual(law: Law, values: list[Value | None]) -> Value | None:
-    """A ref's value minus what `law` predicts for it from the others, for
-    the first numeric ref the law can predict; None if there is none."""
+def _residual(law: Law, values: list[Value | None]) -> tuple[Value, Value] | None:
+    """(a ref's value, what `law` predicts for it from the others), for the
+    first numeric ref the law can predict; None if there is none."""
     for k, actual in enumerate(values):
         if not isinstance(actual, int | float | Expr):
             continue
         predicted = _solve(law, k, [None if i == k else v for i, v in enumerate(values)])
         if predicted is not None:
-            return actual - predicted
+            return actual, predicted
     return None
+
+
+def _magnitude(value: Value) -> float:
+    """Size of a number, or of an expression's largest term, for tolerances."""
+    if isinstance(value, Expr):
+        return max(abs(value.const), *(abs(c) for c in value.coefs.values()))
+    return abs(value)
 
 
 def _varvals(variables: list[FormalVariable]) -> tuple[Ref, ...]:
@@ -128,7 +155,7 @@ def _varvals(variables: list[FormalVariable]) -> tuple[Ref, ...]:
 
 def propagate(circuit: Circuit, engine: Engine | None = None) -> list[Fill]:
     """Wake every part and run local one-step deductions to quiescence;
-    return the fills made."""
+    return the fills made. Raises `Contradicted` if a law fails its check."""
     engine = engine or Engine()
     for part in reversed(circuit.parts()):
         engine.wake(part)

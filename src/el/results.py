@@ -173,3 +173,25 @@ class Unfilled(Result):
 
     def render(self) -> str:
         return f"{_name(self.ref)} has no value"
+
+
+@dataclass(frozen=True)
+class Contradiction(Result):
+    """`analyze` stopped because the filled quantities of law `law` disagree.
+    `refs` are the conflicting quantities (hidden ones, ADR 0001, left out),
+    each with its justification in `ref.quantity.justification`; `fills` are
+    the fills made before the failed check. Renders the fills, then each
+    conflicting quantity's value followed by its `why` tree, indented."""
+
+    circuit: Circuit
+    fills: list[Fill]
+    law: str
+    refs: tuple[Ref, ...]
+
+    def render(self) -> str:
+        lines = [fill.render() for fill in self.fills]
+        lines.append(f";CONTRADICTION: law {self.law} does not hold")
+        for ref in self.refs:
+            lines.append(Fill(ref, ref.value).render())
+            lines.extend(f"  {_step(step)}" for step in Why.of(self.circuit, ref).steps)
+        return "\n".join(lines)

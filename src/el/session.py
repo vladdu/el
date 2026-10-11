@@ -14,7 +14,17 @@ from el.expr import Expr, substitute
 from el.loader import WiringError, load
 from el.quantity import FormalVariable, Justification
 from el.reader import QUOTE, Datum, ReadError, Symbol, read_all
-from el.results import Analysis, Answer, Error, LoadError, Result, Unfilled, Why, Wired
+from el.results import (
+    Analysis,
+    Answer,
+    Contradiction,
+    Error,
+    LoadError,
+    Result,
+    Unfilled,
+    Why,
+    Wired,
+)
 
 # The law recorded for a formal variable introduced by `what`.
 WHAT = "WHAT"
@@ -74,7 +84,11 @@ class Session:
         if circuit is None:
             return Error(f"no circuit named {name}")
         self.current = circuit
-        return Analysis(circuit, engine.propagate(circuit, self._engine()))
+        try:
+            fills = engine.propagate(circuit, self._engine())
+        except engine.Contradicted as c:
+            return _contradiction(circuit, c)
+        return Analysis(circuit, fills)
 
     def _what(self, form: list[Datum]) -> Result:
         """`(what part kind [label])`: the quantity's value. If it is not
@@ -98,7 +112,10 @@ class Session:
         if not ref.filled:
             run = self._engine()
             run.fill(ref, Expr.variable(self.new_variable()), Justification(WHAT))
-            fills = run.run()
+            try:
+                fills = run.run()
+            except engine.Contradicted as c:
+                return _contradiction(circuit, c)
         value, _ = substitute(ref.value)
         return Answer(circuit, value, fills)
 
@@ -120,3 +137,8 @@ class Session:
             name = " ".join(s for s in (part, kind, label) if s)
             return Error(f"{circuit.name} has no quantity ({name})")
         return Why.of(circuit, ref) if ref.filled else Unfilled(ref)
+
+
+def _contradiction(circuit: Circuit, c: engine.Contradicted) -> Contradiction:
+    refs = tuple(r for r in c.law.refs if not r.quantity.hidden)
+    return Contradiction(circuit, c.fills, c.law.name, refs)
