@@ -1,0 +1,29 @@
+[project]
+name = "el"
+version = "0.1.0"
+description = "EL: heuristic DC bias circuit analyzer after Sussman & Stallman, MIT AI Memo 328"
+requires-python = ">=3.14"
+dependencies = []
+
+[project.scripts]
+el = "el.repl:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/el"]
+
+[dependency-groups]
+dev = ["pytest", "ruff"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
