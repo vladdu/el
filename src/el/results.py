@@ -92,20 +92,16 @@ class LoadError(Result):
         return "\n".join([head, *(f";  {p.message}" for p in self.problems)])
 
 
-# Antecedent kinds recorded in the dependency graph but left out of `why`
-# output, so explanations stay as concise as the memo's (ADR 0001).
-HIDDEN_KINDS = frozenset({"REGION"})
-
-
 def _name(ref: Ref) -> str:
     return f"({' '.join(ref.name)})"
 
 
 def _shown(ref: Ref) -> tuple[Ref, ...]:
-    """The antecedents of `ref`'s fill that `why` prints."""
+    """The antecedents of `ref`'s fill that `why` prints: hidden quantities (a
+    transistor's operating region, ADR 0001) are recorded but not shown."""
     justification = ref.quantity.justification
     assert justification is not None, f"{ref} is not filled"
-    return tuple(a for a in justification.antecedents if a.quantity.kind not in HIDDEN_KINDS)
+    return tuple(a for a in justification.antecedents if not a.quantity.hidden)
 
 
 def _step(ref: Ref) -> str:

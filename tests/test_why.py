@@ -1,6 +1,7 @@
 import pytest
 from golden import assert_why_matches, assert_why_texts_match
 from test_propagation import CHAIN
+from test_transistors import NPN
 
 from el import Session
 
@@ -141,3 +142,22 @@ def test_why_comparator_renames_formal_variables_consistently():
     swapped = swapped.replace("((V8 VARVAL)) - BE", "((V7 VARVAL)) - BE")
     with pytest.raises(AssertionError, match="NODE"):
         assert_why_texts_match(circuit, WITH_VARS, swapped)
+
+
+def npn_session():
+    session = Session()
+    session.run(NPN)
+    session.run("(analyze 'npn)")
+    return session
+
+
+def test_why_leaves_out_the_operating_region_behind_a_be_step():
+    # BE also read Q1's REGION (ADR 0001), but `why` does not show it.
+    assert why(npn_session(), "node1 voltage").render() == (
+        "((NODE1 VOLTAGE) <= ((BASE VOLTAGE) (Q1 VBE)) - BE)\n"
+        "((BASE VOLTAGE) GIVEN)\n((Q1 VBE) GIVEN)\nQED"
+    )
+
+
+def test_why_shows_component_model_premises_as_default():
+    assert "((Q1 CURRENT B) DEFAULT)" in why(npn_session(), "q1 current c").render().splitlines()
