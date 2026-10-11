@@ -90,3 +90,62 @@ class LoadError(Result):
         named = f" {self.name}" if self.name else ""
         head = f";ERROR: wiring diagram{named} rejected"
         return "\n".join([head, *(f";  {p.message}" for p in self.problems)])
+
+
+# Antecedent kinds recorded in the dependency graph but left out of `why`
+# output, so explanations stay as concise as the memo's (ADR 0001).
+HIDDEN_KINDS = frozenset({"REGION"})
+
+
+def _name(ref: Ref) -> str:
+    return f"({' '.join(ref.name)})"
+
+
+def _shown(ref: Ref) -> tuple[Ref, ...]:
+    """The antecedents of `ref`'s fill that `why` prints."""
+    justification = ref.quantity.justification
+    assert justification is not None, f"{ref} is not filled"
+    return tuple(a for a in justification.antecedents if a.quantity.kind not in HIDDEN_KINDS)
+
+
+def _step(ref: Ref) -> str:
+    justification = ref.quantity.justification
+    assert justification is not None, f"{ref} is not filled"
+    if justification.is_premise:
+        return f"({_name(ref)} {justification.law})"
+    antecedents = " ".join(_name(a) for a in _shown(ref))
+    return f"({_name(ref)} <= ({antecedents}) - {justification.law})"
+
+
+@dataclass(frozen=True)
+class Why(Result):
+    """The justification tree of a filled quantity: one step per quantity,
+    breadth first from `steps[0]` (the quantity asked about), each quantity
+    once, named as the first law that read it named it. Each step's
+    justification is `step.quantity.justification`."""
+
+    circuit: Circuit
+    steps: tuple[Ref, ...]
+
+    @classmethod
+    def of(cls, circuit: Circuit, root: Ref) -> Why:
+        steps, seen = [root], {id(root.quantity)}
+        for ref in steps:  # `steps` grows while iterating: breadth first
+            for antecedent in _shown(ref):
+                if id(antecedent.quantity) not in seen:
+                    seen.add(id(antecedent.quantity))
+                    steps.append(antecedent)
+        return cls(circuit, tuple(steps))
+
+    def render(self) -> str:
+        return "\n".join([*(_step(ref) for ref in self.steps), "QED"])
+
+
+@dataclass(frozen=True)
+class Unfilled(Result):
+    """`why` asked about a quantity that has no value."""
+
+    ref: Ref
+
+    def render(self) -> str:
+        return f"{_name(self.ref)} has no value"

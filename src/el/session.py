@@ -11,7 +11,7 @@ from el import engine
 from el.circuit import Circuit
 from el.loader import WiringError, load
 from el.reader import QUOTE, Datum, ReadError, Symbol, read_all
-from el.results import Analysis, Error, LoadError, Result, Wired
+from el.results import Analysis, Error, LoadError, Result, Unfilled, Why, Wired
 
 
 class Session:
@@ -21,6 +21,7 @@ class Session:
         self._commands: dict[str, Callable[[list[Datum]], Result]] = {
             "WIRE": self._wire,
             "ANALYZE": self._analyze,
+            "WHY": self._why,
         }
 
     def run(self, text: str) -> list[Result]:
@@ -59,3 +60,22 @@ class Session:
             return Error(f"no circuit named {name}")
         self.current = circuit
         return Analysis(circuit, engine.propagate(circuit))
+
+    def _why(self, form: list[Datum]) -> Result:
+        """`(why part kind [label])` on the current circuit."""
+        match form:
+            case [_, Symbol() as part, Symbol() as kind]:
+                label = None
+            case [_, Symbol() as part, Symbol() as kind, Symbol() as label]:
+                pass
+            case _:
+                return Error("usage: (why part quantity [terminal])")
+        circuit = self.current
+        if circuit is None:
+            return Error("no circuit analyzed yet")
+        try:
+            ref = circuit.ref(part, kind, label)
+        except KeyError:
+            name = " ".join(s for s in (part, kind, label) if s)
+            return Error(f"{circuit.name} has no quantity ({name})")
+        return Why.of(circuit, ref) if ref.filled else Unfilled(ref)
