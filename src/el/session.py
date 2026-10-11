@@ -11,7 +11,7 @@ from el import engine
 from el.circuit import Circuit
 from el.loader import WiringError, load
 from el.reader import QUOTE, Datum, ReadError, Symbol, read_all
-from el.results import Analysis, Error, Result, Wired
+from el.results import Analysis, Error, LoadError, Result, Wired
 
 
 class Session:
@@ -42,7 +42,7 @@ class Session:
         try:
             circuit = load(form)
         except WiringError as e:
-            return Error(str(e))
+            return LoadError(e.name, tuple(e.problems))
         self.circuits[circuit.name] = circuit
         return Wired(circuit)
 
