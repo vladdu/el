@@ -14,7 +14,7 @@ from el.expr import Expr, substitute
 from el.loader import WiringError, load
 from el.quantity import FormalVariable, Justification
 from el.reader import QUOTE, Datum, ReadError, Symbol, read_all
-from el.results import Analysis, Answer, Error, LoadError, Result, Wired
+from el.results import Analysis, Answer, Error, LoadError, Result, Unfilled, Why, Wired
 
 # The law recorded for a formal variable introduced by `what`.
 WHAT = "WHAT"
@@ -29,6 +29,7 @@ class Session:
             "WIRE": self._wire,
             "ANALYZE": self._analyze,
             "WHAT": self._what,
+            "WHY": self._why,
         }
 
     def new_variable(self) -> FormalVariable:
@@ -100,3 +101,22 @@ class Session:
             fills = run.run()
         value, _ = substitute(ref.value)
         return Answer(circuit, value, fills)
+
+    def _why(self, form: list[Datum]) -> Result:
+        """`(why part kind [label])` on the current circuit."""
+        match form:
+            case [_, Symbol() as part, Symbol() as kind]:
+                label = None
+            case [_, Symbol() as part, Symbol() as kind, Symbol() as label]:
+                pass
+            case _:
+                return Error("usage: (why part quantity [terminal])")
+        circuit = self.current
+        if circuit is None:
+            return Error("no circuit analyzed yet")
+        try:
+            ref = circuit.ref(part, kind, label)
+        except KeyError:
+            name = " ".join(s for s in (part, kind, label) if s)
+            return Error(f"{circuit.name} has no quantity ({name})")
+        return Why.of(circuit, ref) if ref.filled else Unfilled(ref)

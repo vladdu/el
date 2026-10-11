@@ -33,9 +33,9 @@ def _linear(datum):
     match datum:
         case int() | float():
             return float(datum), {}
-        case str() if _is_var(datum):
+        case str() if _is_var_name(datum):
             return 0.0, {str(datum): 1.0}
-        case ["&*", int() | float() as c, str() as var] if _is_var(var):
+        case ["&*", int() | float() as c, str() as var] if _is_var_name(var):
             return 0.0, {str(var): float(c)}
         case ["&+", *terms]:
             const, coefs = 0.0, {}
@@ -50,7 +50,7 @@ def _linear(datum):
     return None
 
 
-def _is_var(datum) -> bool:
+def _is_var_name(datum) -> bool:
     return isinstance(datum, str) and datum[:1] == "V" and datum[1:].isdigit()
 
 
@@ -107,7 +107,7 @@ def _parse(circuit, text: str, side: str):
     names: set[str] = set()
     for line in lines:
         match line:
-            case [var, "VARVAL", value] if _is_var(var):
+            case [var, "VARVAL", value] if _is_var_name(var):
                 key, sign = ("VARVAL", str(var)), 1
                 names.add(str(var))
             case [part, kind, label, value]:
@@ -181,3 +181,101 @@ def assert_answer_matches(result, expected_text: str) -> None:
     expected = _parse(result.circuit, expected_text, "expected")
     actual = _parse(result.circuit, result.render(), "actual")
     _assert_match(expected, actual)
+
+
+# Why trees. Each line justifies one quantity: `((Q) <= ((A) (B) ...) - LAW)`
+# or, for a premise, `((Q) GIVEN)` / `((Q) DEFAULT)`; the tree ends in QED.
+# Lines are keyed by the underlying quantity (so `(R4 CURRENT #1)` is the same
+# line as `(R4 CURRENT ME)`) and compared as law plus antecedent set; order is
+# ignored. DEFAULT counts as GIVEN. Formal variables, `(Vn VARVAL)`, have no
+# quantity in the circuit; the two sides' variables are paired by their own
+# VARVAL lines, and the pairing must be consistent across the whole tree.
+
+PREMISE = "PREMISE"  # GIVEN or DEFAULT
+
+
+def _why_key(circuit, name):
+    match name:
+        case [var, "VARVAL"]:
+            return ("VARVAL", str(var))
+        case [part, kind]:
+            return circuit.ref(part, kind).quantity
+        case [part, kind, label]:
+            return circuit.ref(part, kind, label).quantity
+    raise AssertionError(f"unreadable quantity {_text(name)}")
+
+
+def _why_lines(circuit, text: str, side: str) -> dict:
+    """Parse a why tree ending in QED into {key: (line text, law, frozenset of
+    antecedent keys)}."""
+    *lines, qed = read_all(text)
+    assert qed == "QED", f"{side} why tree must end with QED, got {_text(qed)}"
+    tree = {}
+    for line in lines:
+        match line:
+            case [name, "<=", list(antecedents), "-", law]:
+                ants = frozenset(_why_key(circuit, a) for a in antecedents)
+            case [name, "GIVEN" | "DEFAULT"]:
+                law, ants = PREMISE, frozenset()
+            case _:
+                raise AssertionError(f"{side}: unreadable why line {_text(line)}")
+        key = _why_key(circuit, name)
+        assert key not in tree, f"{side} justifies {_text(name)} twice"
+        tree[key] = (_text(line), str(law), ants)
+    return tree
+
+
+def _is_var(key) -> bool:
+    return isinstance(key, tuple) and key[0] == "VARVAL"
+
+
+def _pair_variables(expected: dict, actual: dict) -> dict:
+    """Map expected formal variables to actual ones whose VARVAL lines agree
+    (same law, same antecedents once already-paired variables are renamed).
+    Repeats until no more pairs are found; ambiguous ones stay unpaired."""
+    renaming: dict = {}
+    while True:
+        found = False
+        for e in [k for k in expected if _is_var(k) and k not in renaming]:
+            _, law, ants = expected[e]
+            if any(_is_var(a) and a not in renaming for a in ants):
+                continue
+            want = frozenset(renaming.get(a, a) for a in ants)
+            taken = set(renaming.values())
+            candidates = [
+                a for a in actual if _is_var(a) and a not in taken and actual[a][1:] == (law, want)
+            ]
+            if len(candidates) == 1:
+                renaming[e] = candidates[0]
+                found = True
+        if not found:
+            return renaming
+
+
+def assert_why_texts_match(circuit, expected_text: str, actual_text: str) -> None:
+    expected = _why_lines(circuit, expected_text, "expected")
+    actual = _why_lines(circuit, actual_text, "actual")
+    renaming = _pair_variables(expected, actual)
+
+    def rename(key):
+        return renaming.get(key, key)
+
+    expected = {
+        rename(k): (line, law, frozenset(map(rename, ants)))
+        for k, (line, law, ants) in expected.items()
+    }
+    missing = [line for k, (line, _, _) in expected.items() if k not in actual]
+    extra = [line for k, (line, _, _) in actual.items() if k not in expected]
+    assert not missing and not extra, f"missing why lines {missing}, unexpected {extra}"
+    wrong = [
+        f"expected {line}, got {actual[k][0]}"
+        for k, (line, law, ants) in expected.items()
+        if actual[k][1:] != (law, ants)
+    ]
+    assert not wrong, "wrong justifications: " + "; ".join(wrong)
+
+
+def assert_why_matches(result, expected_text: str) -> None:
+    """Assert `result` (a Why) printed the expected tree, line for line up to
+    order, naming, DEFAULT/GIVEN and formal-variable numbering."""
+    assert_why_texts_match(result.circuit, expected_text, result.render())
