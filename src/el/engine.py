@@ -7,11 +7,35 @@ until the queue is empty. The engine knows nothing about part types: parts
 bring their own laws (`el.circuit`).
 """
 
+import math
 from collections import deque
 
 from el.circuit import Circuit, Part
 from el.quantity import Justification, Law, Ref, Value
 from el.results import Fill
+
+
+class Contradicted(Exception):
+    """A law whose refs are all filled does not hold. Raised out of `run`;
+    nothing is filled by the failed check, so the circuit keeps the state it
+    had just before it. `fills` are the fills made before it."""
+
+    def __init__(self, law: Law, fills: list[Fill]) -> None:
+        super().__init__(law.name)
+        self.law = law
+        self.fills = fills
+
+
+def _holds(law: Law) -> bool:
+    """Whether a law whose refs are all filled holds: solving for the first
+    ref the law can solve reproduces its value. A law that can solve for none
+    of them (BE outside the ACTIVE region) checks nothing."""
+    values = [ref.value for ref in law.refs]
+    for k, actual in enumerate(values):
+        expected = law.solve(k, values[:k] + [None] + values[k + 1 :])
+        if expected is not None:
+            return math.isclose(actual, expected, rel_tol=1e-9, abs_tol=1e-12)
+    return True
 
 
 class Engine:
@@ -46,8 +70,11 @@ class Engine:
 
     def _apply(self, law: Law) -> None:
         unfilled = [i for i, ref in enumerate(law.refs) if not ref.filled]
+        if not unfilled:
+            if not _holds(law):
+                raise Contradicted(law, self.fills)
+            return
         if len(unfilled) != 1:
-            # All filled: a consistency check belongs here (tickets 05, 10).
             return
         [target] = unfilled
         value = law.solve(target, [ref.value for ref in law.refs])
@@ -59,7 +86,7 @@ class Engine:
 
 def propagate(circuit: Circuit) -> list[Fill]:
     """Wake every part and run local one-step deductions to quiescence;
-    return the fills made."""
+    return the fills made. Raises `Contradicted` if a law fails its check."""
     engine = Engine()
     for part in circuit.parts():
         engine.wake(part)

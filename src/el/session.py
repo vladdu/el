@@ -11,7 +11,16 @@ from el import engine
 from el.circuit import Circuit
 from el.loader import WiringError, load
 from el.reader import QUOTE, Datum, ReadError, Symbol, read_all
-from el.results import Analysis, Error, LoadError, Result, Unfilled, Why, Wired
+from el.results import (
+    Analysis,
+    Contradiction,
+    Error,
+    LoadError,
+    Result,
+    Unfilled,
+    Why,
+    Wired,
+)
 
 
 class Session:
@@ -59,7 +68,12 @@ class Session:
         if circuit is None:
             return Error(f"no circuit named {name}")
         self.current = circuit
-        return Analysis(circuit, engine.propagate(circuit))
+        try:
+            fills = engine.propagate(circuit)
+        except engine.Contradicted as c:
+            refs = tuple(r for r in c.law.refs if not r.quantity.hidden)
+            return Contradiction(circuit, c.fills, c.law.name, refs)
+        return Analysis(circuit, fills)
 
     def _why(self, form: list[Datum]) -> Result:
         """`(why part kind [label])` on the current circuit."""
