@@ -6,6 +6,7 @@ here and nowhere else.
 
 from dataclasses import dataclass, field
 
+from el.checks import Problem
 from el.circuit import Circuit
 
 
@@ -43,3 +44,17 @@ class Error(Result):
 
     def render(self) -> str:
         return f";ERROR: {self.message}"
+
+
+@dataclass(frozen=True)
+class LoadError(Result):
+    """A rejected wiring diagram: every problem the load-time checks found.
+    `name` is the circuit name, or None if the form had none."""
+
+    name: str | None
+    problems: tuple[Problem, ...]
+
+    def render(self) -> str:
+        named = f" {self.name}" if self.name else ""
+        head = f";ERROR: wiring diagram{named} rejected"
+        return "\n".join([head, *(f";  {p.message}" for p in self.problems)])
