@@ -27,7 +27,19 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-from el.quantity import ACTIVE, DEFAULT, FRESH, REGION, UNKNOWN, Law, Quantity, Ref, Value
+from el.quantity import (
+    ACTIVE,
+    DEFAULT,
+    FRESH,
+    REGION,
+    UNKNOWN,
+    Law,
+    Quantity,
+    Ref,
+    Solved,
+    Solver,
+    Value,
+)
 
 
 @dataclass(frozen=True)
@@ -79,6 +91,12 @@ class Element(Part):
 
     def terminals(self) -> list[Terminal]:
         return [Terminal(self.name, t) for t in self.TERMINALS]
+
+
+def _sum_to_zero(target: int, values: list[Value | None]) -> Value | None:
+    """The values sum to zero: KCL (the currents into a node) and the
+    transistor current law (Ib + Ie + Ic = 0)."""
+    return -sum(v for i, v in enumerate(values) if i != target)
 
 
 def _ohm(target: int, values: list[Value | None]) -> Value | None:
@@ -143,11 +161,6 @@ def _be(target: int, values: list[Value | None]) -> Value | None:
     return None
 
 
-def _transistor_currents(target: int, values: list[Value | None]) -> Value | None:
-    """Ib + Ie + Ic = 0: the currents into the three terminals."""
-    return -sum(v for i, v in enumerate(values) if i != target)
-
-
 @dataclass(eq=False)
 class Transistor(Element):
     """A bipolar transistor in EL's simple model. `vbe` is signed: positive
@@ -184,7 +197,7 @@ class Transistor(Element):
         currents = tuple(self.ref("CURRENT", t) for t in ("B", "E", "C"))
         return [
             Law("BE", (vb, ve, self.ref("VBE"), self.ref(REGION)), _be),
-            Law("TRANSISTOR", currents, _transistor_currents),
+            Law("TRANSISTOR", currents, _sum_to_zero),
         ]
 
 
@@ -194,7 +207,7 @@ ELEMENT_TYPES: dict[str, type[Element]] = {
 }
 
 
-def _vd_demon(target: int, values: list[Value | None]) -> Value | object | None:
+def _vd_midpoint_variable(target: int, values: list[Value | None]) -> Solved:
     """Once the resistances and both end voltages are known, the midpoint
     voltage becomes a fresh formal variable, not the divider formula, so a
     divider loaded at its midpoint still comes out right: the variable is
@@ -229,7 +242,7 @@ class VoltageDivider(Part):
             bottom.ref("VOLTAGE"),
             mid.ref("VOLTAGE"),
         )
-        return [Law("VD-DEMON", refs, _vd_demon)]
+        return [Law("VD-DEMON", refs, _vd_midpoint_variable)]
 
 
 def complementary_pair(
@@ -268,13 +281,13 @@ def complementary_pair(
     return (npn, pnp, common.pop()) if len(common) == 1 else None
 
 
-def _cp_demon(target: int, values: list[Value | None]) -> Value | object | None:
+def _cp_offset_variable(target: int, values: list[Value | None]) -> Solved:
     """Once the watched voltage is known, the offset becomes a fresh formal
     variable."""
     return FRESH if target == 1 else None
 
 
-def _cp_base(sign: int) -> Callable[[int, list[Value | None]], Value | None]:
+def _cp_base(sign: int) -> Solver:
     """base = mid + sign * offset."""
 
     def solve(target: int, values: list[Value | None]) -> Value | None:
@@ -299,13 +312,13 @@ class ComplementaryPair(Part):
 
     The offset X is a hidden quantity of the pair (filled and recorded, but
     neither printed nor shown by `why`, like a transistor's region, ADR
-    0001). Its law CP-DEMON fills X with a fresh formal variable once any
+    0001). Its law CP-OFFSET fills X with a fresh formal variable once any
     one of the three voltages is filled. The two base equations (law CP)
     belong to two separate parts, `ComplementaryPairBase`, one per
     transistor in hint order. A part runs all its laws when it wakes, so with
     both equations in one part the second base would be filled from X right
     after the first. As separate parts, filling the first base propagates
-    through the network before the second equation runs: in Example 2 the
+    through the circuit before the second equation runs: in Example 2 the
     PNP base (NODE3) is reached through R137 and R136 first, and its CP law
     becomes the check that solves X, as in the memo's transcript.
 
@@ -331,14 +344,16 @@ class ComplementaryPair(Part):
         return npn, pnp, circuit.nodes[mid]
 
     def make_laws(self, circuit: Circuit) -> list[Law]:
-        """CP-DEMON laws; also makes both transistors' region a Default of
+        """CP-OFFSET laws; also makes both transistors' region a Default of
         UNKNOWN."""
         npn, pnp, mid = self.members(circuit)
         for transistor in (npn, pnp):
             transistor.assume_region(UNKNOWN)
         bases = [circuit.node_at(Terminal(t.name, "B")) for t in (npn, pnp)]
         offset = self.ref("OFFSET")
-        return [Law("CP-DEMON", (n.ref("VOLTAGE"), offset), _cp_demon) for n in (mid, *bases)]
+        return [
+            Law("CP-OFFSET", (n.ref("VOLTAGE"), offset), _cp_offset_variable) for n in (mid, *bases)
+        ]
 
 
 @dataclass(eq=False)
@@ -365,11 +380,6 @@ HINT_TYPES: dict[str, Callable[[list[str]], list[Part]]] = {
 }
 
 
-def _kcl(target: int, values: list[Value | None]) -> Value | None:
-    """The currents into a node sum to zero."""
-    return -sum(v for i, v in enumerate(values) if i != target)
-
-
 @dataclass(eq=False)
 class Node(Part):
     """A set of connected terminals. `voltage` is the declared fixed voltage,
@@ -392,7 +402,7 @@ class Node(Part):
         if self.voltage is not None:
             return []
         currents = tuple(circuit.elements[t.element].ref("CURRENT", t.name) for t in self.terminals)
-        return [Law("KCL", currents, _kcl)]
+        return [Law("KCL", currents, _sum_to_zero)]
 
 
 @dataclass(eq=False)

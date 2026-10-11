@@ -28,7 +28,7 @@ def test_loaded_divider_midpoint_accounts_for_the_load():
     assert abs(answer.value - 10 / 3) < 1e-12
 
 
-def test_vd_demon_introduces_a_formal_variable_justified_by_the_divider():
+def test_vd_macro_element_introduces_a_formal_variable_justified_by_the_divider():
     [why] = loaded_session().run("(why mid voltage)")
     assert_why_matches(
         why,

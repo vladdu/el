@@ -27,7 +27,8 @@ it has more, it is kept as a pending equation, retried whenever one of its
 variables is solved; it solves the last one when all others are.
 
 A law may instead fill its target with a fresh formal variable (its solver
-returns `FRESH`): that is how a macro-element's demon introduces one.
+returns `FRESH`): that is how a macro-element law such as VD-DEMON
+introduces one.
 
 Each fill records itself as a dependent of every quantity it read, so
 `retract` can forget a quantity and, transitively, everything deduced from
@@ -49,6 +50,7 @@ from el.quantity import (
     PendingEquation,
     Quantity,
     Ref,
+    Solved,
     Value,
 )
 from el.results import Fill
@@ -174,7 +176,7 @@ class Engine:
         self.fill(Ref(variable), root, Justification(equation.law.name, antecedents))
 
 
-def _solve(law: Law, target: int, values: list[Value | None]) -> Value | object | None:
+def _solve(law: Law, target: int, values: list[Value | None]) -> Solved:
     """What `law` deduces for refs[target] from `values` (None at target):
     a value, FRESH, or None if it cannot, including when that would not be
     linear."""

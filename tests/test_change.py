@@ -80,7 +80,7 @@ def test_change_retracts_a_formal_variable_value_that_depended_on_the_premise():
 
 def test_change_of_a_divider_resistor_redoes_the_divider_with_a_new_variable():
     """R2's resistance feeds VD-DEMON, so MID and everything after it is
-    forgotten and the demon introduces a fresh variable. As in `analyze`,
+    forgotten and VD-DEMON introduces a fresh variable. As in `analyze`,
     R3's current comes from KCL at MID and R3's OHM law is the check. By
     hand, with R2 = 500: (10 - m)/1000 = m/500 + m/1000, so m = 2.5."""
     session = analyzed(LOADED, "loaded")
