@@ -97,3 +97,58 @@ def test_rejected_wiring_diagram_leaves_existing_circuit_untouched():
     [analysis] = session.run("(analyze 'div)")
     assert analysis.circuit is good.circuit
     assert session.circuits["DIV"] is good.circuit
+
+
+# GOOD plus a transistor and a third resistor RC from TOP to GND, so that a
+# vd hint can name the wrong kinds of part.
+HINTED = """
+(wire div
+  (node (top 15) (gnd 0) base)
+  (resistor (ra 1000) (rb 2000) (rc 500))
+  (transistor (q1 .6))
+  (connect (top (#1 ra) (#1 rc) (c q1)) ((#2 ra) (#1 rb)) (gnd (#2 rb) (#2 rc) (e q1))
+           (base (b q1)))
+  (hint HINT))
+"""
+
+
+def hinted(hint):
+    return HINTED.replace("HINT", hint)
+
+
+def test_vd_hint_on_two_resistors_sharing_a_node_passes():
+    [result] = Session().run(hinted("(vd ra rb)"))
+    assert isinstance(result, Wired), result.render()
+
+
+def test_vd_hint_naming_a_transistor_is_rejected():
+    result = rejected(hinted("(vd ra q1)"))
+    assert kinds(result) == ["BAD-HINT"]
+    assert "(VD RA Q1)" in result.problems[0].message
+
+
+def test_vd_hint_naming_an_undeclared_part_is_rejected():
+    assert kinds(rejected(hinted("(vd ra r9)"))) == ["BAD-HINT"]
+
+
+def test_vd_hint_naming_other_than_two_parts_is_rejected():
+    assert kinds(rejected(hinted("(vd ra)"))) == ["BAD-HINT"]
+    assert kinds(rejected(hinted("(vd ra rb rc)"))) == ["BAD-HINT"]
+
+
+def test_vd_hint_on_resistors_not_sharing_a_node_is_rejected():
+    text = hinted("(vd ra rb)").replace("((#2 ra) (#1 rb))", "((#2 ra)) ((#1 rb))")
+    result = rejected(text)
+    assert kinds(result) == ["BAD-HINT"]
+    assert "share" in result.problems[0].message
+
+
+def test_vd_hint_on_resistors_in_parallel_is_rejected():
+    # RD across TOP-NODE1, alongside RA: both nodes shared, no midpoint.
+    text = hinted("(vd ra rd)").replace("(rc 500)", "(rc 500) (rd 10)")
+    text = text.replace("(#1 rc)", "(#1 rc) (#1 rd)").replace("((#2 ra)", "((#2 ra) (#2 rd)")
+    assert kinds(rejected(text)) == ["BAD-HINT"]
+
+
+def test_unknown_hint_is_a_load_error():
+    assert kinds(rejected(hinted("(xx ra rb)"))) == ["MALFORMED"]

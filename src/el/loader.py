@@ -6,8 +6,8 @@ every check passes, so a rejected wiring diagram never replaces an existing
 circuit.
 """
 
-from el.checks import Connection, Diagram, Problem, check, node_names
-from el.circuit import ELEMENT_TYPES, Circuit, Node, Terminal
+from el.checks import Connection, Diagram, Hint, Problem, check, node_names
+from el.circuit import ELEMENT_TYPES, HINT_TYPES, Circuit, Node, Terminal
 from el.reader import Datum, Symbol
 
 
@@ -50,6 +50,8 @@ def _parse(name: Symbol, clauses: list[Datum]) -> Diagram:
                 diagram.nodes[node.name] = node
         elif keyword == "CONNECT":
             diagram.connections.extend(_connection(entry) for entry in entries)
+        elif keyword == "HINT":
+            diagram.hints.extend(_hint(entry) for entry in entries)
         elif keyword in ELEMENT_TYPES:
             for entry in entries:
                 element_name, value = _name_value(entry)
@@ -80,6 +82,15 @@ def _terminal(datum: Datum) -> Terminal:
     raise _Malformed(f"expected (terminal element), got {datum!r}")
 
 
+def _hint(entry: Datum) -> Hint:
+    match entry:
+        case [Symbol() as kind, *names] if all(isinstance(n, Symbol) for n in names):
+            if kind not in HINT_TYPES:
+                raise _Malformed(f"unknown hint {kind}")
+            return Hint(kind, names)
+    raise _Malformed(f"malformed hint: {entry!r}")
+
+
 def _connection(entry: Datum) -> Connection:
     if not isinstance(entry, list) or not entry:
         raise _Malformed(f"malformed connection: {entry!r}")
@@ -97,5 +108,6 @@ def _build(diagram: Diagram) -> Circuit:
         if connection.node is None:
             circuit.nodes[name] = Node(Symbol(name))
         circuit.nodes[name].terminals.extend(connection.terminals)
+    circuit.macros = [HINT_TYPES[h.kind](h.names) for h in diagram.hints]
     circuit.make_laws()
     return circuit

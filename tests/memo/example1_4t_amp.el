@@ -1,0 +1,79 @@
+(wire 4t-amp
+ (node (vcc 15) (gnd 0) input output)
+ (transistor (q1 .6) (q2 .6) (q3 .6) (q4 .6))
+ (resistor (r1 370000) (r2 100000) (r3 10000) (r4 1800)
+           (r5 5600) (r6 3900) (r7 6800))
+ (connect
+  (vcc (#1 r1) (#1 r3) (#1 r5) (c q4))
+  (gnd (#2 r2) (#2 r4) (#2 r6) (#2 r7))
+  (input (#2 r1) (#1 r2) (b q1))
+  ((#2 r3) (c q1) (c q2) (b q3))          ;NODE1
+  ((e q1) (b q2))                         ;NODE2
+  ((e q2) (#1 r4))                        ;NODE3
+  ((#2 r5) (c q3) (b q4))                 ;NODE4
+  ((e q3) (#1 r6))                        ;NODE5
+  (output (e q4) (#1 r7)))
+ (hint (vd r1 r2)))
+
+DONE
+
+(analyze '4t-amp)
+
+(Q1 CURRENT E 0.0)
+(INPUT VOLTAGE V7)
+(R1 CURRENT ME (&+ 4.0540541E-5 (&* -2.7027027E-6 V7)))
+(R2 CURRENT #1 (&+ 4.0540541E-5 (&* -2.7027027E-6 V7)))
+(V7 VARVAL 3.19148964)
+(NODE2 VOLTAGE 2.59148955)
+(NODE3 VOLTAGE 1.99148953)
+(R4 CURRENT ME 1.10638307E-3)
+(Q2 CURRENT E -1.10638307E-3)
+(R3 CURRENT #2 -1.10638304E-3)
+(NODE1 VOLTAGE 3.9361696)
+(NODE5 VOLTAGE 3.3361697)
+(R6 CURRENT ME 8.55428135E-4)
+(Q3 CURRENT E -8.55428135E-4)
+(R5 CURRENT #2 -8.5542817E-4)
+(NODE4 VOLTAGE 10.2096023)
+(OUTPUT VOLTAGE 9.609602)
+(R7 CURRENT ME 1.41317676E-3)
+(Q4 CURRENT E -1.41317676E-3)
+DONE
+
+(why r3 current)
+
+((R3 CURRENT) <= ((Q3 CURRENT B) (Q2 CURRENT C) (Q1 CURRENT C)) - KCL)
+((Q3 CURRENT B) GIVEN)
+((Q2 CURRENT C) <= ((R4 CURRENT #1)) - KCL)
+((Q1 CURRENT C) <= ((Q2 CURRENT B)) - KCL)
+((R4 CURRENT #1) <= ((NODE3 VOLTAGE) (GND VOLTAGE) (R4 RESISTANCE)) - OHM)
+((Q2 CURRENT B) GIVEN)
+((NODE3 VOLTAGE) <= ((Q2 VBE) (NODE2 VOLTAGE)) - BE)
+((R4 RESISTANCE) GIVEN)
+((Q2 VBE) GIVEN)
+((NODE2 VOLTAGE) <= ((Q1 VBE) (INPUT VOLTAGE) (V7 VARVAL)) - BE)
+((Q1 VBE) GIVEN)
+((V7 VARVAL) <= ((INPUT VOLTAGE) (GND VOLTAGE)
+                 (R2 CURRENT #1) (R2 RESISTANCE)) - OHM)
+((R2 CURRENT #1) <= ((Q1 CURRENT B) (R1 CURRENT #2)) - KCL)
+((Q1 CURRENT B) GIVEN)
+((R1 CURRENT #2) <= ((VCC VOLTAGE) (INPUT VOLTAGE) (R1 RESISTANCE)) - OHM)
+((INPUT VOLTAGE) <= ((R1 RESISTANCE) (R2 RESISTANCE)
+                     (VCC VOLTAGE) (GND VOLTAGE)) - VD-DEMON)
+((R1 RESISTANCE) GIVEN)
+((VCC VOLTAGE) GIVEN)
+((R2 RESISTANCE) GIVEN)
+((GND VOLTAGE) GIVEN)
+          QED
+
+(change r6 resistance 3200.0)
+
+(R6 RESISTANCE 3200.0)
+(R6 CURRENT ME 1.04255303E-3)
+(Q3 CURRENT E -1.04255303E-3)
+(R5 CURRENT #2 -1.042553E-3)
+(NODE4 VOLTAGE 9.161703)
+(OUTPUT VOLTAGE 8.56170272)
+(R7 CURRENT ME 1.25907393E-3)
+(Q4 CURRENT E -1.25907393E-3)
+DONE

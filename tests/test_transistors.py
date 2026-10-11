@@ -1,4 +1,5 @@
-from golden import assert_fills_match
+import pytest
+from golden import assert_fills_match, assert_why_matches
 
 from el import Session
 from el.results import Analysis, LoadError, Wired
@@ -141,3 +142,58 @@ def test_load_time_checks_cover_transistor_terminals():
     assert isinstance(result, LoadError), result.render()
     assert sorted(p.kind for p in result.problems) == ["UNCONNECTED-TERMINAL", "UNKNOWN-TERMINAL"]
     assert any("(B Q1)" in p.message for p in result.problems)
+
+
+# The memo aliases a transistor's E and C currents (spec Further Notes); our
+# tree has `(Q1 CURRENT C) <= ((Q1 CURRENT B) (Q1 CURRENT E)) - TRANSISTOR`
+# and `(Q1 CURRENT E) <= ((R2 CURRENT #1)) - KCL`. Collapsed, that is the
+# memo's `(Q1 CURRENT C) <= ((R2 CURRENT #1)) - KCL`, and (Q1 CURRENT B),
+# used only by the transistor step, drops out.
+MEMO_STYLE_WHY_R1 = """
+((R1 CURRENT #2) <= ((Q1 CURRENT C)) - KCL)
+((Q1 CURRENT C) <= ((R2 CURRENT #1)) - KCL)
+((R2 CURRENT #1) <= ((NODE1 VOLTAGE) (GND VOLTAGE) (R2 RESISTANCE)) - OHM)
+((NODE1 VOLTAGE) <= ((Q1 VBE) (BASE VOLTAGE)) - BE)
+((GND VOLTAGE) GIVEN)
+((R2 RESISTANCE) GIVEN)
+((Q1 VBE) GIVEN)
+((BASE VOLTAGE) GIVEN)
+QED
+"""
+
+
+def npn_why_r1():
+    session = Session()
+    session.run(NPN)
+    session.run("(analyze 'npn)")
+    [why] = session.run("(why r1 current)")
+    return why
+
+
+def test_comparator_collapses_transistor_current_law_steps_when_asked():
+    assert_why_matches(npn_why_r1(), MEMO_STYLE_WHY_R1, collapse_transistor_currents=True)
+
+
+def test_comparator_keeps_transistor_current_law_steps_by_default():
+    with pytest.raises(AssertionError):
+        assert_why_matches(npn_why_r1(), MEMO_STYLE_WHY_R1)
+
+
+def test_collapsed_comparison_still_catches_a_wrong_antecedent():
+    wrong = MEMO_STYLE_WHY_R1.replace(
+        "((Q1 CURRENT C) <= ((R2 CURRENT #1)) - KCL)",
+        "((Q1 CURRENT C) <= ((R2 CURRENT #1) (Q1 CURRENT B)) - KCL)\n((Q1 CURRENT B) DEFAULT)",
+    )
+    with pytest.raises(AssertionError):
+        assert_why_matches(npn_why_r1(), wrong, collapse_transistor_currents=True)
+
+
+def test_collapsed_fills_count_aliased_e_and_c_currents_once():
+    memo_style = NPN_ANALYSIS.replace("(Q1 CURRENT C 1.4E-3)\n", "")
+    result = analyze(NPN, "npn")
+    assert_fills_match(result, memo_style, collapse_transistor_currents=True)
+    with pytest.raises(AssertionError):
+        assert_fills_match(result, memo_style)
+    inconsistent = NPN_ANALYSIS.replace("(Q1 CURRENT C 1.4E-3)", "(Q1 CURRENT C 2.0E-3)")
+    with pytest.raises(AssertionError):
+        assert_fills_match(result, inconsistent, collapse_transistor_currents=True)

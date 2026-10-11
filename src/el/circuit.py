@@ -13,12 +13,21 @@ registry entry.
 
 Terminal currents are currents *into* the terminal. A terminal's voltage is
 its node's voltage quantity.
+
+A hint such as `(vd r1 r2)` becomes a macro-element: a part with no
+terminals whose laws relate quantities of the parts it is made of. A part is
+woken whenever a quantity its laws read is filled (it *owns* it), so a
+macro-element watches exactly the quantities its laws name, and anything
+that wakes the owners of a quantity (a fill, or a retraction) wakes the
+macro-elements watching it too. `HINT_TYPES` maps a hint keyword to its
+class.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-from el.quantity import ACTIVE, DEFAULT, Law, Quantity, Ref, Value
+from el.quantity import ACTIVE, DEFAULT, FRESH, Law, Quantity, Ref, Value
 
 
 @dataclass(frozen=True)
@@ -181,6 +190,50 @@ ELEMENT_TYPES: dict[str, type[Element]] = {
 }
 
 
+def _vd_demon(target: int, values: list[Value | None]) -> Value | object | None:
+    """Once the resistances and both end voltages are known, the midpoint
+    voltage becomes a fresh formal variable, not the divider formula, so a
+    divider loaded at its midpoint still comes out right: the variable is
+    solved by a consistency check further on."""
+    return FRESH if target == 4 else None
+
+
+@dataclass(eq=False)
+class VoltageDivider(Part):
+    """The `vd` macro-element: two resistors in series sharing a midpoint
+    node. Its law VD-DEMON watches the two resistances and the two end
+    voltages, and introduces a formal variable at the midpoint."""
+
+    resistors: tuple[str, str] = ("", "")
+
+    @classmethod
+    def from_hint(cls, names: list[str]) -> VoltageDivider:
+        top, bottom = names
+        return cls(f"VD-{top}-{bottom}", resistors=(top, bottom))
+
+    def make_laws(self, circuit: Circuit) -> list[Law]:
+        top_r, bottom_r = (circuit.elements[r] for r in self.resistors)
+        top_nodes = [circuit.node_at(t) for t in top_r.terminals()]
+        bottom_nodes = [circuit.node_at(t) for t in bottom_r.terminals()]
+        [mid] = [n for n in top_nodes if n in bottom_nodes]
+        [top] = [n for n in top_nodes if n is not mid]
+        [bottom] = [n for n in bottom_nodes if n is not mid]
+        refs = (
+            top_r.ref("RESISTANCE"),
+            bottom_r.ref("RESISTANCE"),
+            top.ref("VOLTAGE"),
+            bottom.ref("VOLTAGE"),
+            mid.ref("VOLTAGE"),
+        )
+        return [Law("VD-DEMON", refs, _vd_demon)]
+
+
+# Hint keyword -> builder of its macro-element from the names in the hint.
+HINT_TYPES: dict[str, Callable[[list[str]], Part]] = {
+    "VD": VoltageDivider.from_hint,
+}
+
+
 def _kcl(target: int, values: list[Value | None]) -> Value | None:
     """The currents into a node sum to zero."""
     return -sum(v for i, v in enumerate(values) if i != target)
@@ -216,9 +269,10 @@ class Circuit:
     name: str
     nodes: dict[str, Node] = field(default_factory=dict)
     elements: dict[str, Element] = field(default_factory=dict)
+    macros: list[Part] = field(default_factory=list)
 
     def parts(self) -> list[Part]:
-        return [*self.nodes.values(), *self.elements.values()]
+        return [*self.nodes.values(), *self.elements.values(), *self.macros]
 
     def part(self, name: str) -> Part:
         """The node or element called `name`. Raises KeyError."""
@@ -233,10 +287,22 @@ class Circuit:
 
     def make_laws(self) -> None:
         """Build every part's laws and register each part as an owner of the
-        quantities its laws relate. Call once the topology is complete."""
+        quantities its laws relate. Call once the topology is complete.
+
+        Owners are woken in registration order. A node's voltage is owned
+        first by the elements at its terminals, in the order its `connect`
+        entry lists them (the node knows who is connected to it), then by
+        macro-elements watching it. In Example 1 this is why R1 runs before
+        Q1 once INPUT's voltage is filled, so V7 is solved before NODE2's
+        voltage is deduced from it, as in the memo."""
         for part in self.parts():
             part.laws = part.make_laws(self)
             for law in part.laws:
                 for ref in law.refs:
                     if part not in ref.quantity.owners:
                         ref.quantity.owners.append(part)
+        for node in self.nodes.values():
+            order = [t.element for t in node.terminals]
+            node.quantities["VOLTAGE", None].owners.sort(
+                key=lambda p: order.index(p.name) if p.name in order else len(order)
+            )

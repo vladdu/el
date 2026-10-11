@@ -31,3 +31,8 @@ def transcript(name: str) -> list[tuple[str, str]]:
 @pytest.fixture
 def ladder() -> list[tuple[str, str]]:
     return transcript("example3_ladder.el")
+
+
+@pytest.fixture
+def four_t_amp() -> list[tuple[str, str]]:
+    return transcript("example1_4t_amp.el")

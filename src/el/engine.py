@@ -23,13 +23,16 @@ expression is left as it is. A law whose refs are all filled runs a
 consistency check: the difference between a ref's value and what the law
 predicts for it must vanish. If that difference still has exactly one
 unsolved formal variable, the check solves for it and fills its VARVAL.
+
+A law may instead fill its target with a fresh formal variable (its solver
+returns `FRESH`): that is how a macro-element's demon introduces one.
 """
 
 from collections.abc import Callable
 
 from el.circuit import Circuit, Part
 from el.expr import Expr, NonLinear, substitute
-from el.quantity import FormalVariable, Justification, Law, Ref, Value
+from el.quantity import FRESH, FormalVariable, Justification, Law, Ref, Value
 from el.results import Fill
 
 
@@ -95,6 +98,8 @@ class Engine:
         value = _solve(law, target, values)
         if value is None:
             return
+        if value is FRESH:
+            value = Expr.variable(self.new_variable())
         antecedents = law.refs[:target] + law.refs[target + 1 :] + _varvals(used)
         self.fill(law.refs[target], value, Justification(law.name, antecedents))
 
@@ -121,9 +126,10 @@ class Engine:
         self.fill(Ref(variable), value, Justification(law.name, antecedents))
 
 
-def _solve(law: Law, target: int, values: list[Value | None]) -> Value | None:
-    """What `law` deduces for refs[target] from `values` (None at target),
-    or None if it cannot, including when that would not be linear."""
+def _solve(law: Law, target: int, values: list[Value | None]) -> Value | object | None:
+    """What `law` deduces for refs[target] from `values` (None at target):
+    a value, FRESH, or None if it cannot, including when that would not be
+    linear."""
     try:
         return law.solve(target, values)
     except NonLinear:
@@ -137,7 +143,7 @@ def _residual(law: Law, values: list[Value | None]) -> tuple[Value, Value] | Non
         if not isinstance(actual, int | float | Expr):
             continue
         predicted = _solve(law, k, [None if i == k else v for i, v in enumerate(values)])
-        if predicted is not None:
+        if predicted is not None and predicted is not FRESH:
             return actual, predicted
     return None
 

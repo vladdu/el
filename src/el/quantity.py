@@ -122,10 +122,23 @@ def canonical_ref(quantity: Quantity) -> Ref:
     return Ref(quantity, quantity.label, 1)
 
 
+class _Fresh:
+    def __repr__(self) -> str:
+        return "FRESH"
+
+
+# What a solver returns to fill its target with a fresh formal variable
+# instead of a value: a macro-element's demon law (VD-DEMON) does this. The
+# engine makes the variable. Such a law states no equation, so it is never
+# used for a consistency check.
+FRESH = _Fresh()
+
+
 # solve(target, values): the value of refs[target] given `values`, the values
 # of all refs in order (values[target] is None), or None if this law cannot
-# deduce that ref (e.g. OHM cannot find a resistance from zero current).
-type Solver = Callable[[int, list[Value | None]], Value | None]
+# deduce that ref (e.g. OHM cannot find a resistance from zero current), or
+# FRESH.
+type Solver = Callable[[int, list[Value | None]], Value | _Fresh | None]
 
 
 @dataclass(eq=False)

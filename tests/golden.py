@@ -14,6 +14,14 @@ Values may be expressions in formal variables, in the memo's form `V3`,
 coefficient. A formal variable's solution prints as `(V3 VARVAL 0.125)`.
 Formal-variable names on the two sides are equal up to a consistent renaming
 (the memo's numbering is not reproduced).
+
+The memo aliases a transistor's emitter and collector currents; EL keeps
+them separate, tied by the transistor current law (spec Implementation
+Decisions). Memo goldens pass `collapse_transistor_currents=True`: a
+transistor's `C` current is then read as its `E` current with the opposite
+sign (exact while the base current is the Default 0). A side that fills
+both counts once, provided they agree; in a why tree the TRANSISTOR step
+between them is dropped, as is any line no longer reachable from the root.
 """
 
 import itertools
@@ -98,7 +106,21 @@ def _variables(value) -> set[str]:
     return set(value[1]) if isinstance(value, tuple) else set()
 
 
-def _parse(circuit, text: str, side: str):
+TRANSISTOR = "TRANSISTOR"
+
+
+def _resolve(circuit, name: list, collapse: bool):
+    """(quantity, sign) named by `(part kind [label])`; with `collapse`, a
+    transistor's C current is its E current with the opposite sign."""
+    ref = circuit.ref(*name)
+    match name:
+        case [part, "CURRENT", "E" | "C" as label] if collapse:
+            emitter = circuit.ref(part, "CURRENT", "E")
+            return emitter.quantity, ref.sign if label == "E" else -ref.sign
+    return ref.quantity, ref.sign
+
+
+def _parse(circuit, text: str, side: str, collapse: bool = False):
     """Parse a transcript of fill lines followed by a final answer into
     ({key: (line text, value in canonical sign)}, answer, variable names).
     A key is the filled quantity, or ("VARVAL", name) for a VARVAL line."""
@@ -111,15 +133,19 @@ def _parse(circuit, text: str, side: str):
                 key, sign = ("VARVAL", str(var)), 1
                 names.add(str(var))
             case [part, kind, label, value]:
-                ref = circuit.ref(part, kind, label)
-                key, sign = ref.quantity, ref.sign
+                key, sign = _resolve(circuit, [part, kind, label], collapse)
             case [part, kind, value]:
-                ref = circuit.ref(part, kind, None)
-                key, sign = ref.quantity, ref.sign
+                key, sign = _resolve(circuit, [part, kind, None], collapse)
             case _:
                 raise AssertionError(f"{side}: unreadable fill {_text(line)}")
-        assert key not in fills, f"{side} fills {_text(line)} twice"
         parsed = _scale(_value(value), sign)
+        if collapse and key in fills:
+            first = fills[key][0]
+            assert values_match(fills[key][1], parsed), (
+                f"{side}: aliased fills {first} and {_text(line)} disagree"
+            )
+            continue
+        assert key not in fills, f"{side} fills {_text(line)} twice"
         names |= _variables(parsed)
         fills[key] = (_text(line), parsed)
     answer = _value(answer)
@@ -166,11 +192,14 @@ def _assert_match(expected, actual) -> None:
     raise AssertionError("; ".join(first or []))
 
 
-def assert_fills_match(result, expected_text: str) -> None:
+def assert_fills_match(
+    result, expected_text: str, *, collapse_transistor_currents: bool = False
+) -> None:
     """Assert `result` (an Analysis) printed exactly the expected fills, in
     any order, and answered DONE."""
-    expected = _parse(result.circuit, expected_text, "expected")
-    actual = _parse(result.circuit, result.render(), "actual")
+    collapse = collapse_transistor_currents
+    expected = _parse(result.circuit, expected_text, "expected", collapse)
+    actual = _parse(result.circuit, result.render(), "actual", collapse)
     assert expected[1] == "DONE", f"expected transcript must end with DONE, got {expected[1]}"
     _assert_match(expected, actual)
 
@@ -194,18 +223,16 @@ def assert_answer_matches(result, expected_text: str) -> None:
 PREMISE = "PREMISE"  # GIVEN or DEFAULT
 
 
-def _why_key(circuit, name):
+def _why_key(circuit, name, collapse: bool = False):
     match name:
         case [var, "VARVAL"]:
             return ("VARVAL", str(var))
-        case [part, kind]:
-            return circuit.ref(part, kind).quantity
-        case [part, kind, label]:
-            return circuit.ref(part, kind, label).quantity
+        case [_, _] | [_, _, _]:
+            return _resolve(circuit, name, collapse)[0]
     raise AssertionError(f"unreadable quantity {_text(name)}")
 
 
-def _why_lines(circuit, text: str, side: str) -> dict:
+def _why_lines(circuit, text: str, side: str, collapse: bool = False) -> dict:
     """Parse a why tree ending in QED into {key: (line text, law, frozenset of
     antecedent keys)}."""
     *lines, qed = read_all(text)
@@ -214,15 +241,32 @@ def _why_lines(circuit, text: str, side: str) -> dict:
     for line in lines:
         match line:
             case [name, "<=", list(antecedents), "-", law]:
-                ants = frozenset(_why_key(circuit, a) for a in antecedents)
+                ants = frozenset(_why_key(circuit, a, collapse) for a in antecedents)
             case [name, "GIVEN" | "DEFAULT"]:
                 law, ants = PREMISE, frozenset()
             case _:
                 raise AssertionError(f"{side}: unreadable why line {_text(line)}")
-        key = _why_key(circuit, name)
+        key = _why_key(circuit, name, collapse)
+        entry = (_text(line), str(law), ants - {key})
+        if collapse and key in tree and TRANSISTOR in (law, tree[key][1]):
+            if law != TRANSISTOR:
+                tree[key] = entry
+            continue
         assert key not in tree, f"{side} justifies {_text(name)} twice"
-        tree[key] = (_text(line), str(law), ants)
-    return tree
+        tree[key] = entry
+    return _reachable(tree, _why_key(circuit, lines[0][0], collapse)) if collapse else tree
+
+
+def _reachable(tree: dict, root) -> dict:
+    """The lines of `tree` reachable from `root` through antecedents."""
+    keep, todo = set(), [root]
+    while todo:
+        key = todo.pop()
+        if key in keep or key not in tree:
+            continue
+        keep.add(key)
+        todo.extend(tree[key][2])
+    return {k: v for k, v in tree.items() if k in keep}
 
 
 def _is_var(key) -> bool:
@@ -252,9 +296,11 @@ def _pair_variables(expected: dict, actual: dict) -> dict:
             return renaming
 
 
-def assert_why_texts_match(circuit, expected_text: str, actual_text: str) -> None:
-    expected = _why_lines(circuit, expected_text, "expected")
-    actual = _why_lines(circuit, actual_text, "actual")
+def assert_why_texts_match(
+    circuit, expected_text: str, actual_text: str, collapse: bool = False
+) -> None:
+    expected = _why_lines(circuit, expected_text, "expected", collapse)
+    actual = _why_lines(circuit, actual_text, "actual", collapse)
     renaming = _pair_variables(expected, actual)
 
     def rename(key):
@@ -275,7 +321,11 @@ def assert_why_texts_match(circuit, expected_text: str, actual_text: str) -> Non
     assert not wrong, "wrong justifications: " + "; ".join(wrong)
 
 
-def assert_why_matches(result, expected_text: str) -> None:
+def assert_why_matches(
+    result, expected_text: str, *, collapse_transistor_currents: bool = False
+) -> None:
     """Assert `result` (a Why) printed the expected tree, line for line up to
     order, naming, DEFAULT/GIVEN and formal-variable numbering."""
-    assert_why_texts_match(result.circuit, expected_text, result.render())
+    assert_why_texts_match(
+        result.circuit, expected_text, result.render(), collapse_transistor_currents
+    )

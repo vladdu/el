@@ -35,7 +35,7 @@ def render_value(value: Value) -> str:
     if isinstance(value, Expr):
         return _render_expr(value)
     if isinstance(value, int | float):
-        x = float(value)
+        x = float(value) + 0.0  # -0.0 prints as 0.0, as in the memo
         if x == 0 or 0.1 <= abs(x) < 1e8:
             return repr(x)
         for digits in range(17):
