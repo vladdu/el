@@ -29,6 +29,10 @@ type Value = float
 GIVEN = "GIVEN"
 DEFAULT = "DEFAULT"
 
+# Operating region values (ADR 0001). A region-dependent law solves only when
+# its region quantity reads ACTIVE.
+ACTIVE = "ACTIVE"
+
 
 @dataclass(frozen=True)
 class Justification:
@@ -49,7 +53,9 @@ class Quantity:
 
     Identity matters: two quantities are equal only if they are the same
     object. `owners` are the parts with a law over this quantity; filling it
-    wakes them."""
+    wakes them. A `hidden` quantity (a transistor's operating region, ADR
+    0001) is recorded as an antecedent like any other but left out of `why`
+    output."""
 
     part: str
     kind: str
@@ -57,6 +63,7 @@ class Quantity:
     value: Value | None = None
     justification: Justification | None = None
     owners: list[Part] = field(default_factory=list)
+    hidden: bool = False
 
     @property
     def filled(self) -> bool:
