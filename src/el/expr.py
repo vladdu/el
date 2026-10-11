@@ -8,16 +8,18 @@ always has at least one variable. Multiplying or dividing by something that
 has variables is not linear and raises `NonLinear`; the engine reads that as
 "this law cannot deduce this quantity".
 
-A formal variable is any hashable object with a `name` (printed form, e.g.
-`V3`) and a `value` (its VARVAL: None until solved, then a number); the
-engine uses a `Quantity` of kind VARVAL. Several variables per expression
-are supported, so a later simultaneous-equation solver can consume pending
-equations.
+Variables are `FormalVariable`s (`el.quantity`): a `name` (printed form,
+e.g. `V3`) and a `value` (its VARVAL: None until solved, then a number).
+Several variables per expression are supported, so a later
+simultaneous-equation solver can consume pending equations.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from el.quantity import FormalVariable
 
 # Variable coefficients that cancel to within this fraction of the terms that
 # produced them are dropped, so float noise cannot leave a spurious variable
@@ -32,21 +34,21 @@ class NonLinear(ArithmeticError):
 class Expr:
     __slots__ = ("const", "coefs")
 
-    def __init__(self, const: float, coefs: dict[Any, float]) -> None:
+    def __init__(self, const: float, coefs: dict[FormalVariable, float]) -> None:
         self.const = const
         self.coefs = coefs
 
     @staticmethod
-    def variable(var: Any) -> Expr:
+    def variable(var: FormalVariable) -> Expr:
         return Expr(0.0, {var: 1.0})
 
     @staticmethod
-    def make(const: float, coefs: dict[Any, float]) -> float | Expr:
+    def make(const: float, coefs: dict[FormalVariable, float]) -> float | Expr:
         coefs = {v: c for v, c in coefs.items() if c != 0.0}
         return Expr(const, coefs) if coefs else float(const)
 
     @property
-    def variables(self) -> list[Any]:
+    def variables(self) -> list[FormalVariable]:
         return list(self.coefs)
 
     # Arithmetic. `other` is a number or an Expr.
@@ -104,7 +106,7 @@ class Expr:
 
     __hash__ = None  # type: ignore[assignment]
 
-    def substitute(self) -> tuple[float | Expr, list[Any]]:
+    def substitute(self) -> tuple[float | Expr, list[FormalVariable]]:
         """This expression with every solved variable replaced by its value,
         and the solved variables used, in order. Does not modify self."""
         used = [v for v in self.coefs if v.value is not None]
@@ -114,7 +116,7 @@ class Expr:
         rest = {v: c for v, c in self.coefs.items() if v.value is None}
         return Expr.make(const, rest), used
 
-    def solve(self) -> tuple[Any, float]:
+    def solve(self) -> tuple[FormalVariable, float]:
         """For an expression in exactly one variable, the variable and the
         value that makes the expression zero."""
         [(var, coef)] = self.coefs.items()
@@ -125,7 +127,7 @@ class Expr:
         return f"Expr({self.const} + {terms})"
 
 
-def substitute(value: object) -> tuple[object, list[Any]]:
+def substitute(value: object) -> tuple[object, list[FormalVariable]]:
     """`value` with known formal-variable values substituted in, and the
     variables used. Non-expressions come back unchanged."""
     if isinstance(value, Expr):

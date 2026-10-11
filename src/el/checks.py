@@ -109,10 +109,7 @@ def check_terminals_connected(diagram: Diagram) -> Iterator[Problem]:
 
 def check_vd_hints(diagram: Diagram) -> Iterator[Problem]:
     """A `vd` hint names two resistors that share exactly one node."""
-    nodes_of: dict[Terminal, str] = {}
-    for node, connection in zip(node_names(diagram), diagram.connections, strict=True):
-        for terminal in connection.terminals:
-            nodes_of[terminal] = node
+    nodes_of = terminal_nodes(diagram)
     for hint in diagram.hints:
         if hint.kind != "VD":
             continue
@@ -129,10 +126,7 @@ def check_vd_hints(diagram: Diagram) -> Iterator[Problem]:
 def check_cp_hints(diagram: Diagram) -> Iterator[Problem]:
     """A `cp` hint names one NPN and one PNP transistor whose emitters reach
     a common node (see `circuit.complementary_pair`)."""
-    nodes_of: dict[Terminal, str] = {}
-    for node, connection in zip(node_names(diagram), diagram.connections, strict=True):
-        for terminal in connection.terminals:
-            nodes_of[terminal] = node
+    nodes_of = terminal_nodes(diagram)
     for hint in diagram.hints:
         if hint.kind != "CP":
             continue
@@ -155,6 +149,16 @@ def node_names(diagram: Diagram) -> list[str]:
         else:
             names.append(connection.node)
     return names
+
+
+def terminal_nodes(diagram: Diagram) -> dict[Terminal, str]:
+    """The node name each connected terminal is connected to (the last one,
+    if it is connected twice)."""
+    return {
+        terminal: node
+        for node, connection in zip(node_names(diagram), diagram.connections, strict=True)
+        for terminal in connection.terminals
+    }
 
 
 CHECKS: list[Callable[[Diagram], Iterator[Problem]]] = [

@@ -19,10 +19,10 @@ from el.results import (
     Analysis,
     Answer,
     Contradiction,
-    Equation,
     Error,
     Fill,
     LoadError,
+    ReportedEquation,
     Result,
     Unfilled,
     Why,
@@ -173,7 +173,7 @@ class Session:
         return Analysis(circuit, fills)
 
 
-def _pending(value: object) -> tuple[Equation, ...]:
+def _pending(value: object) -> tuple[ReportedEquation, ...]:
     """The pending equations in `value`'s unsolved variables that still have
     more than one unsolved variable, each once, substituted."""
     if not isinstance(value, Expr):
@@ -185,7 +185,7 @@ def _pending(value: object) -> tuple[Equation, ...]:
     for equation in equations:
         expr, _ = substitute(equation.expr)
         if isinstance(expr, Expr) and len(expr.variables) > 1:
-            pending.append(Equation(expr, equation.law.name))
+            pending.append(ReportedEquation(expr, equation.law.name))
     return tuple(pending)
 
 

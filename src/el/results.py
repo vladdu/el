@@ -80,7 +80,7 @@ class Analysis(Result):
 
 
 @dataclass(frozen=True)
-class Equation:
+class ReportedEquation:
     """A pending equation `expr = 0` from a check of law `law`, with known
     formal variables substituted. Renders `((&+ ...) = 0 - OHM)`."""
 
@@ -102,7 +102,7 @@ class Answer(Result):
     circuit: Circuit
     value: Value
     fills: list[Fill] = field(default_factory=list)
-    pending: tuple[Equation, ...] = ()
+    pending: tuple[ReportedEquation, ...] = ()
 
     def render(self) -> str:
         answer = [render_value(self.value), *(e.render() for e in self.pending)]
