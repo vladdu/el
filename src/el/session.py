@@ -12,12 +12,13 @@ from el import engine
 from el.circuit import Circuit
 from el.expr import Expr, substitute
 from el.loader import WiringError, load
-from el.quantity import GIVEN, FormalVariable, Justification
+from el.quantity import GIVEN, FormalVariable, Justification, PendingEquation
 from el.reader import QUOTE, Datum, ReadError, Symbol, read_all
 from el.results import (
     Analysis,
     Answer,
     Contradiction,
+    Equation,
     Error,
     LoadError,
     Result,
@@ -118,7 +119,7 @@ class Session:
             except engine.Contradicted as c:
                 return _contradiction(circuit, c)
         value, _ = substitute(ref.value)
-        return Answer(circuit, value, fills)
+        return Answer(circuit, value, fills, _pending(value))
 
     def _why(self, form: list[Datum]) -> Result:
         """`(why part kind [label])` on the current circuit."""
@@ -181,6 +182,22 @@ class Session:
         except engine.Contradicted as c:
             return _contradiction(circuit, c)
         return Analysis(circuit, fills)
+
+
+def _pending(value: object) -> tuple[Equation, ...]:
+    """The pending equations in `value`'s unsolved variables that still have
+    more than one unsolved variable, each once, substituted."""
+    if not isinstance(value, Expr):
+        return ()
+    equations: list[PendingEquation] = []
+    for variable in value.variables:
+        equations += [e for e in variable.pending if e not in equations]
+    pending = []
+    for equation in equations:
+        expr, _ = substitute(equation.expr)
+        if isinstance(expr, Expr) and len(expr.variables) > 1:
+            pending.append(Equation(expr, equation.law.name))
+    return tuple(pending)
 
 
 def _contradiction(circuit: Circuit, c: engine.Contradicted) -> Contradiction:

@@ -80,20 +80,35 @@ class Analysis(Result):
 
 
 @dataclass(frozen=True)
+class Equation:
+    """A pending equation `expr = 0` from a check of law `law`, with known
+    formal variables substituted. Renders `((&+ ...) = 0 - OHM)`."""
+
+    expr: Value
+    law: str
+
+    def render(self) -> str:
+        return f"({render_value(self.expr)} = 0 - {self.law})"
+
+
+@dataclass(frozen=True)
 class Answer(Result):
     """The outcome of `what`: the quantity's value, with known formal
     variables substituted, after the fills (if any) made to find it. The
-    fills include the new formal variable and its VARVAL once solved."""
+    fills include the new formal variable and its VARVAL once solved. If the
+    value is still an expression, `pending` are the pending equations in its
+    variables, listed after it."""
 
     circuit: Circuit
     value: Value
     fills: list[Fill] = field(default_factory=list)
+    pending: tuple[Equation, ...] = ()
 
     def render(self) -> str:
-        answer = render_value(self.value)
+        answer = [render_value(self.value), *(e.render() for e in self.pending)]
         if not self.fills:
-            return answer
-        return "\n".join([*(fill.render() for fill in self.fills), "", answer])
+            return "\n".join(answer)
+        return "\n".join([*(fill.render() for fill in self.fills), "", *answer])
 
 
 @dataclass(frozen=True)

@@ -22,7 +22,9 @@ and each one used becomes an antecedent `(V<n> VARVAL)`; the stored
 expression is left as it is. A law whose refs are all filled runs a
 consistency check: the difference between a ref's value and what the law
 predicts for it must vanish. If that difference still has exactly one
-unsolved formal variable, the check solves for it and fills its VARVAL.
+unsolved formal variable, the check solves for it and fills its VARVAL. If
+it has more, it is kept as a pending equation, retried whenever one of its
+variables is solved; it solves the last one when all others are.
 
 A law may instead fill its target with a fresh formal variable (its solver
 returns `FRESH`): that is how a macro-element's demon introduces one.
@@ -36,7 +38,16 @@ from collections.abc import Callable
 
 from el.circuit import Circuit, Part
 from el.expr import Expr, NonLinear, substitute
-from el.quantity import FRESH, FormalVariable, Justification, Law, Quantity, Ref, Value
+from el.quantity import (
+    FRESH,
+    FormalVariable,
+    Justification,
+    Law,
+    PendingEquation,
+    Quantity,
+    Ref,
+    Value,
+)
 from el.results import Fill
 
 
@@ -81,6 +92,9 @@ class Engine:
             self.fills.append(Fill(ref, value))
         for part in reversed(quantity.owners):
             self.wake(part)
+        if isinstance(quantity, FormalVariable):
+            for equation in list(quantity.pending):
+                self._retry(equation)
 
     def run(self) -> list[Fill]:
         while self._agenda:
@@ -123,16 +137,38 @@ class Engine:
         actual, predicted = residual
         difference = actual - predicted
         if not isinstance(difference, Expr):
-            scale = max(_magnitude(actual), _magnitude(predicted))
-            if abs(difference) > 1e-12 + 1e-9 * scale:
+            if _differs(difference, max(_magnitude(actual), _magnitude(predicted))):
                 raise Contradicted(law, self.fills)
             return
-        if len(difference.variables) > 1:
-            # More than one unsolved variable: a pending equation (ticket 11).
+        justification = Justification(law.name, law.refs + _varvals(used))
+        if len(difference.variables) == 1:
+            variable, value = difference.solve()
+            self.fill(Ref(variable), value, justification)
             return
-        variable, value = difference.solve()
-        antecedents = law.refs + _varvals(used)
-        self.fill(Ref(variable), value, Justification(law.name, antecedents))
+        if any(e.law is law for e in difference.variables[0].pending):
+            return  # this check is already pending
+        equation = PendingEquation(law, difference, justification)
+        for antecedent in justification.antecedents:
+            antecedent.quantity.dependents.append(equation)
+
+    def _retry(self, equation: PendingEquation) -> None:
+        """Retry a pending equation after one of its variables was solved:
+        solve its last unsolved variable, or, if none is left, check it."""
+        assert equation.justification is not None
+        value, used = substitute(equation.expr)
+        if not isinstance(value, Expr):
+            e = equation.expr
+            scale = max(abs(e.const), *(abs(c * v.value) for v, c in e.coefs.items()))
+            if _differs(value, scale):
+                raise Contradicted(equation.law, self.fills)
+            return
+        if len(value.variables) > 1:
+            return
+        variable, root = value.solve()
+        # The variables substituted now were unsolved when the equation was
+        # stored, so they are not among its antecedents yet.
+        antecedents = equation.justification.antecedents + _varvals(used)
+        self.fill(Ref(variable), root, Justification(equation.law.name, antecedents))
 
 
 def _solve(law: Law, target: int, values: list[Value | None]) -> Value | object | None:
@@ -155,6 +191,11 @@ def _residual(law: Law, values: list[Value | None]) -> tuple[Value, Value] | Non
         if predicted is not None and predicted is not FRESH:
             return actual, predicted
     return None
+
+
+def _differs(difference: float, scale: float) -> bool:
+    """Whether a check's residual is too large to be float rounding."""
+    return abs(difference) > 1e-12 + 1e-9 * scale
 
 
 def _magnitude(value: Value) -> float:

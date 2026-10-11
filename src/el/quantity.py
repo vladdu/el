@@ -97,13 +97,48 @@ class FormalVariable(Quantity):
     """A formal variable `V<n>`, introduced as the value of a quantity whose
     value is not known. It is itself a quantity, `(V<n> VARVAL)`, filled with
     a number when a consistency check solves for it; its justification is
-    that check."""
+    that check. `pending` are the pending equations it appears in."""
 
     kind: str = "VARVAL"
+    pending: list[PendingEquation] = field(default_factory=list)
 
     @property
     def name(self) -> str:
         return self.part
+
+
+@dataclass(eq=False)
+class PendingEquation:
+    """`expr = 0`, from a consistency check of `law` that left more than one
+    formal variable unsolved. Kept on each of its variables and retried
+    whenever one of them is solved; it solves the last one when all others
+    are. Its justification is the check (the law's refs plus the VARVALs
+    substituted into it), so retracting any of those retracts it, like a
+    quantity (`el.engine.retract`). It has no owners: nothing is woken when it
+    goes."""
+
+    law: Law
+    expr: Expr
+    justification: Justification | None
+    owners: list[Part] = field(default_factory=list)
+    dependents: list[Quantity] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        for variable in self.expr.variables:
+            variable.pending.append(self)
+
+    def depends_on(self, quantity: Quantity) -> bool:
+        j = self.justification
+        return j is not None and any(a.quantity is quantity for a in j.antecedents)
+
+    def forget(self) -> None:
+        """Drop the equation (retraction)."""
+        self.justification = None
+        for variable in self.expr.variables:
+            variable.pending.remove(self)
+
+    def __repr__(self) -> str:
+        return f"PendingEquation({self.expr!r} = 0 - {self.law.name})"
 
 
 @dataclass(frozen=True)
