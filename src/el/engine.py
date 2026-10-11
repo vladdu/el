@@ -26,13 +26,17 @@ unsolved formal variable, the check solves for it and fills its VARVAL.
 
 A law may instead fill its target with a fresh formal variable (its solver
 returns `FRESH`): that is how a macro-element's demon introduces one.
+
+Each fill records itself as a dependent of every quantity it read, so
+`retract` can forget a quantity and, transitively, everything deduced from
+it (`change`).
 """
 
 from collections.abc import Callable
 
 from el.circuit import Circuit, Part
 from el.expr import Expr, NonLinear, substitute
-from el.quantity import FRESH, FormalVariable, Justification, Law, Ref, Value
+from el.quantity import FRESH, FormalVariable, Justification, Law, Quantity, Ref, Value
 from el.results import Fill
 
 
@@ -69,6 +73,8 @@ class Engine:
         quantity = ref.quantity
         quantity.value = ref.sign * value
         quantity.justification = justification
+        for antecedent in justification.antecedents:
+            antecedent.quantity.dependents.append(quantity)
         self.fills.append(Fill(ref, value))
         for part in reversed(quantity.owners):
             self.wake(part)
@@ -157,6 +163,23 @@ def _magnitude(value: Value) -> float:
 
 def _varvals(variables: list[FormalVariable]) -> tuple[Ref, ...]:
     return tuple(Ref(v) for v in variables)
+
+
+def retract(quantity: Quantity) -> list[Quantity]:
+    """Forget `quantity` and, transitively, everything whose fill depended on
+    it (quantities and VARVALs alike). Returns the forgotten quantities,
+    `quantity` first. A dependent entry is followed only if that dependent's
+    current fill still reads the quantity (entries go stale when a quantity
+    is retracted and filled again from other antecedents)."""
+    retracted, todo = [], [quantity]
+    while todo:
+        q = todo.pop()
+        if any(r is q for r in retracted):
+            continue
+        todo.extend(d for d in q.dependents if d.depends_on(q))
+        q.forget()
+        retracted.append(q)
+    return retracted
 
 
 def propagate(circuit: Circuit, engine: Engine | None = None) -> list[Fill]:

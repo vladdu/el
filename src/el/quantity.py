@@ -53,9 +53,11 @@ class Quantity:
 
     Identity matters: two quantities are equal only if they are the same
     object. `owners` are the parts with a law over this quantity; filling it
-    wakes them. A `hidden` quantity (a transistor's operating region, ADR
-    0001) is recorded as an antecedent like any other but left out of `why`
-    output."""
+    wakes them. `dependents` are the quantities whose fills read this one
+    (recorded by the engine; may be stale after a retraction, so check their
+    justification before trusting an entry). A `hidden` quantity (a
+    transistor's operating region, ADR 0001) is recorded as an antecedent
+    like any other but left out of `why` output."""
 
     part: str
     kind: str
@@ -64,6 +66,18 @@ class Quantity:
     justification: Justification | None = None
     owners: list[Part] = field(default_factory=list)
     hidden: bool = False
+    dependents: list[Quantity] = field(default_factory=list)
+
+    def depends_on(self, quantity: Quantity) -> bool:
+        """Whether this quantity's current fill read `quantity`."""
+        j = self.justification
+        return j is not None and any(a.quantity is quantity for a in j.antecedents)
+
+    def forget(self) -> None:
+        """Drop the value and justification (retraction)."""
+        self.value = None
+        self.justification = None
+        self.dependents = []
 
     @property
     def filled(self) -> bool:

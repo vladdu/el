@@ -48,3 +48,15 @@ def test_example1_prints_q1s_zero_currents_as_the_memo_does(four_t_amp):
     lines = result.render().splitlines()
     assert lines[0] == "(Q1 CURRENT E 0.0)"
     assert "(Q1 CURRENT C 0.0)" in lines
+
+
+def test_example1_change_r6_resistance_matches_the_memo(four_t_amp):
+    """Only what depended on R6's old resistance is deduced again: R6's
+    current, Q3's emitter current, NODE4 through R5, then OUTPUT and Q4.
+    The input stage (V7, NODE1-3) is kept."""
+    session = Session()
+    for command, _ in four_t_amp[:3]:
+        session.run(command)
+    command, expected = four_t_amp[3]
+    [result] = session.run(command)
+    assert_fills_match(result, expected, collapse_transistor_currents=True)
