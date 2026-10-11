@@ -161,3 +161,15 @@ def test_after_an_undone_change_a_consistent_change_still_works():
         "(R3 RESISTANCE 2000.0) (R3 CURRENT ME 2.2E-3) (Q1 CURRENT E -2.2E-3)"
         " (Q1 CURRENT C 2.2E-3) (R4 CURRENT #2 -2.2E-3) (NODE2 VOLTAGE 7.8) DONE",
     )
+
+
+def test_change_refuses_an_operating_region():
+    session = analyzed(FOLLOWER, "follower")
+    [result] = session.run("(change q1 region 1.0)")
+    assert result.render() == (
+        ";ERROR: (Q1 REGION) is an operating region; switching transistor models is not supported"
+    )
+    [what] = session.run("(what q1 region)")
+    assert what.render() == "ACTIVE"
+    [why] = session.run("(why node1 voltage)")
+    assert why.render().splitlines()[0] == "((NODE1 VOLTAGE) <= ((BASE VOLTAGE) (Q1 VBE)) - BE)"

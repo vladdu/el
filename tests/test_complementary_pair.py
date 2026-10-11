@@ -60,3 +60,12 @@ def test_hint_order_does_not_decide_which_base_is_above_the_midpoint():
 def test_without_the_hint_be_sets_the_emitter_voltage():
     _, analysis = analyzed(PAIR.replace("(hint (cp qn qp))", ""))
     assert "(OUT VOLTAGE 9.4)" in analysis.render().splitlines()
+
+
+def test_cp_region_is_a_default_of_unknown():
+    session, _ = analyzed()
+    for transistor in ("qn", "qp"):
+        [what] = session.run(f"(what {transistor} region)")
+        assert what.render() == "UNKNOWN"
+        [why] = session.run(f"(why {transistor} region)")
+        assert why.render() == f"(({transistor.upper()} REGION) DEFAULT)\nQED"

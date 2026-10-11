@@ -27,7 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-from el.quantity import ACTIVE, DEFAULT, FRESH, Law, Quantity, Ref, Value
+from el.quantity import ACTIVE, DEFAULT, FRESH, REGION, UNKNOWN, Law, Quantity, Ref, Value
 
 
 @dataclass(frozen=True)
@@ -169,17 +169,21 @@ class Transistor(Element):
         vbe.premise(self.vbe)
         base = Quantity(self.name, "CURRENT", "B")
         base.premise(0.0, DEFAULT)
-        region = Quantity(self.name, "REGION", hidden=True)
+        region = Quantity(self.name, REGION, hidden=True)
         region.premise(ACTIVE, DEFAULT)
         emitter = Quantity(self.name, "CURRENT", "E")
         collector = Quantity(self.name, "CURRENT", "C")
         return [vbe, region, base, emitter, collector]
 
+    def assume_region(self, region: str) -> None:
+        """Make the operating region a Default of `region` instead."""
+        self.quantities[REGION, None].premise(region, DEFAULT)
+
     def make_laws(self, circuit: Circuit) -> list[Law]:
         vb, ve = (circuit.node_at(Terminal(self.name, t)).ref("VOLTAGE") for t in ("B", "E"))
         currents = tuple(self.ref("CURRENT", t) for t in ("B", "E", "C"))
         return [
-            Law("BE", (vb, ve, self.ref("VBE"), self.ref("REGION")), _be),
+            Law("BE", (vb, ve, self.ref("VBE"), self.ref(REGION)), _be),
             Law("TRANSISTOR", currents, _transistor_currents),
         ]
 
@@ -306,7 +310,7 @@ class ComplementaryPair(Part):
     becomes the check that solves X, as in the memo's transcript.
 
     A complementary pair may be cut off, so its transistors' operating
-    region is unknown (unfilled) and BE deduces nothing for them."""
+    region is a hidden Default of UNKNOWN and BE deduces nothing for them."""
 
     transistors: tuple[str, ...] = ()
 
@@ -327,11 +331,11 @@ class ComplementaryPair(Part):
         return npn, pnp, circuit.nodes[mid]
 
     def make_laws(self, circuit: Circuit) -> list[Law]:
-        """CP-DEMON laws; also makes both transistors' region unknown."""
+        """CP-DEMON laws; also makes both transistors' region a Default of
+        UNKNOWN."""
         npn, pnp, mid = self.members(circuit)
         for transistor in (npn, pnp):
-            region = transistor.quantities["REGION", None]
-            region.value = region.justification = None
+            transistor.assume_region(UNKNOWN)
         bases = [circuit.node_at(Terminal(t.name, "B")) for t in (npn, pnp)]
         offset = self.ref("OFFSET")
         return [Law("CP-DEMON", (n.ref("VOLTAGE"), offset), _cp_demon) for n in (mid, *bases)]
