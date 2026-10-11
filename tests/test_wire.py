@@ -10,7 +10,7 @@ def test_ladder_wiring_diagram_loads_and_answers_done(ladder):
 
 def test_analyzing_the_ladder_fills_nothing_and_answers_done(ladder):
     session = Session()
-    for command, expected in ladder:
+    for command, expected in ladder[:2]:
         [result] = session.run(command)
         assert result.render() == expected
     assert isinstance(result, Analysis)
@@ -112,5 +112,5 @@ def test_analyze_unknown_circuit_is_an_error():
 
 
 def test_several_forms_in_one_text_each_give_a_result(ladder):
-    text = "\n".join(command for command, _ in ladder)
+    text = "\n".join(command for command, _ in ladder[:2])
     assert [r.render() for r in Session().run(text)] == ["DONE", "DONE"]

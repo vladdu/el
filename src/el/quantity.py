@@ -18,13 +18,13 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from el.circuit import Part
+    from el.expr import Expr
 
-# A quantity's value. Numbers for now; linear expressions in formal variables
-# later (ticket 05). Laws only use +, -, unary -, and * or / by numbers on
-# values, so a value type supporting those plugs in unchanged. Non-numeric
-# values (e.g. an operating region, ADR 0001) are fine too: laws that read
-# them just compare them.
-type Value = float
+# A quantity's value: a number or a linear expression in formal variables
+# (`el.expr`). Laws only use +, -, unary -, and * or / by numbers on values,
+# so they work on both. Non-numeric values (e.g. an operating region, ADR
+# 0001) are fine too: laws that read them just compare them.
+type Value = float | Expr
 
 GIVEN = "GIVEN"
 DEFAULT = "DEFAULT"
@@ -69,6 +69,20 @@ class Quantity:
 
     def __repr__(self) -> str:
         return f"Quantity({' '.join(canonical_ref(self).name)})"
+
+
+@dataclass(eq=False)
+class FormalVariable(Quantity):
+    """A formal variable `V<n>`, introduced as the value of a quantity whose
+    value is not known. It is itself a quantity, `(V<n> VARVAL)`, filled with
+    a number when a consistency check solves for it; its justification is
+    that check."""
+
+    kind: str = "VARVAL"
+
+    @property
+    def name(self) -> str:
+        return self.part
 
 
 @dataclass(frozen=True)

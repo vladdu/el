@@ -13,3 +13,18 @@ DONE
 (analyze 'ladder)
 
 DONE
+
+(what output voltage)
+
+(OUTPUT VOLTAGE V3)
+(R6 CURRENT ME V3)
+(R5 CURRENT #2 (&* -1.0 V3))
+(NODE2 VOLTAGE (&* 2.0 V3))
+(R4 CURRENT ME V3)
+(R3 CURRENT #2 (&* -2.0 V3))
+(NODE1 VOLTAGE (&* 4.0 V3))
+(R1 CURRENT ME (&+ 1.0 (&* -4.0 V3)))
+(R2 CURRENT #1 (&+ 1.0 (&* -6.0 V3)))
+(V3 VARVAL 0.125)
+
+0.125
