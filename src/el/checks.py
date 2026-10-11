@@ -13,7 +13,7 @@ checks (vd, cp) can read whatever the loader adds to `Diagram`.
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 
-from el.circuit import Element, Node, Resistor, Terminal
+from el.circuit import Element, Node, Resistor, Terminal, complementary_pair
 
 
 @dataclass(frozen=True)
@@ -126,6 +126,24 @@ def check_vd_hints(diagram: Diagram) -> Iterator[Problem]:
             yield Problem("BAD-HINT", f"{text}: the resistors must share exactly one node")
 
 
+def check_cp_hints(diagram: Diagram) -> Iterator[Problem]:
+    """A `cp` hint names one NPN and one PNP transistor whose emitters reach
+    a common node (see `circuit.complementary_pair`)."""
+    nodes_of: dict[Terminal, str] = {}
+    for node, connection in zip(node_names(diagram), diagram.connections, strict=True):
+        for terminal in connection.terminals:
+            nodes_of[terminal] = node
+    for hint in diagram.hints:
+        if hint.kind != "CP":
+            continue
+        if complementary_pair(diagram.elements, nodes_of, hint.names) is None:
+            yield Problem(
+                "BAD-HINT",
+                f"(CP {' '.join(hint.names)}) must name one NPN and one PNP transistor"
+                " whose emitters reach a common node",
+            )
+
+
 def node_names(diagram: Diagram) -> list[str]:
     """The node name of each connection, numbering anonymous ones NODE1, NODE2,
     ... in `connect` order (the loader names them the same way)."""
@@ -145,6 +163,7 @@ CHECKS: list[Callable[[Diagram], Iterator[Problem]]] = [
     check_terminals_connected_once,
     check_terminals_connected,
     check_vd_hints,
+    check_cp_hints,
 ]
 
 

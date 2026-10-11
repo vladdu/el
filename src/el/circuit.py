@@ -228,9 +228,136 @@ class VoltageDivider(Part):
         return [Law("VD-DEMON", refs, _vd_demon)]
 
 
-# Hint keyword -> builder of its macro-element from the names in the hint.
-HINT_TYPES: dict[str, Callable[[list[str]], Part]] = {
-    "VD": VoltageDivider.from_hint,
+def complementary_pair(
+    elements: dict[str, Element], node_of: dict[Terminal, str], names: list[str]
+) -> tuple[Transistor, Transistor, str] | None:
+    """(npn, pnp, midpoint node name) for a `cp` hint naming `names`, or None
+    if they are not one NPN and one PNP transistor whose emitters reach a
+    common node. The emitters reach a node if it is the emitter node of both,
+    or else the one node a single resistor away from each emitter node (the
+    emitter resistors R138 and R139 in Example 2). `node_of` maps each
+    connected terminal to its node's name."""
+    transistors = [elements.get(n) for n in names]
+    if len(transistors) != 2 or not all(isinstance(t, Transistor) for t in transistors):
+        return None
+    npns = [t for t in transistors if t.vbe > 0]
+    pnps = [t for t in transistors if t.vbe < 0]
+    if len(npns) != 1 or len(pnps) != 1:
+        return None
+    [npn], [pnp] = npns, pnps
+    emitters = [node_of.get(Terminal(t.name, "E")) for t in (npn, pnp)]
+    if None in emitters:
+        return None
+    if emitters[0] == emitters[1]:
+        return npn, pnp, emitters[0]
+
+    def one_resistor_away(node: str) -> set[str]:
+        ends: set[str] = set()
+        for r in elements.values():
+            if isinstance(r, Resistor):
+                nodes = [node_of.get(t) for t in r.terminals()]
+                if node in nodes:
+                    ends |= {n for n in nodes if n is not None and n != node}
+        return ends
+
+    common = one_resistor_away(emitters[0]) & one_resistor_away(emitters[1])
+    return (npn, pnp, common.pop()) if len(common) == 1 else None
+
+
+def _cp_demon(target: int, values: list[Value | None]) -> Value | object | None:
+    """Once the watched voltage is known, the offset becomes a fresh formal
+    variable."""
+    return FRESH if target == 1 else None
+
+
+def _cp_base(sign: int) -> Callable[[int, list[Value | None]], Value | None]:
+    """base = mid + sign * offset."""
+
+    def solve(target: int, values: list[Value | None]) -> Value | None:
+        base, mid, offset = values
+        match target:
+            case 0:
+                return mid + sign * offset
+            case 1:
+                return base - sign * offset
+            case 2:
+                return sign * (base - mid)
+        return None
+
+    return solve
+
+
+@dataclass(eq=False)
+class ComplementaryPair(Part):
+    """The `cp` macro-element: an NPN and a PNP transistor whose emitters
+    reach a common midpoint node, biased so that their base voltages sit
+    symmetrically about it: NPN base = mid + X, PNP base = mid - X.
+
+    The offset X is a hidden quantity of the pair (filled and recorded, but
+    neither printed nor shown by `why`, like a transistor's region, ADR
+    0001). Its law CP-DEMON fills X with a fresh formal variable once any
+    one of the three voltages is filled. The two base equations (law CP)
+    belong to two separate parts, `ComplementaryPairBase`, one per
+    transistor in hint order. A part runs all its laws when it wakes, so with
+    both equations in one part the second base would be filled from X right
+    after the first. As separate parts, filling the first base propagates
+    through the network before the second equation runs: in Example 2 the
+    PNP base (NODE3) is reached through R137 and R136 first, and its CP law
+    becomes the check that solves X, as in the memo's transcript.
+
+    A complementary pair may be cut off, so its transistors' operating
+    region is unknown (unfilled) and BE deduces nothing for them."""
+
+    transistors: tuple[str, ...] = ()
+
+    @classmethod
+    def from_hint(cls, names: list[str]) -> list[Part]:
+        pair = cls(f"CP-{'-'.join(names)}", transistors=tuple(names))
+        return [pair, *(ComplementaryPairBase(f"{pair.name}/{n}", pair, n) for n in names)]
+
+    def _quantities(self) -> list[Quantity]:
+        return [Quantity(self.name, "OFFSET", hidden=True)]
+
+    def members(self, circuit: Circuit) -> tuple[Transistor, Transistor, Node]:
+        """(npn, pnp, midpoint node)."""
+        node_of = {t: n.name for n in circuit.nodes.values() for t in n.terminals}
+        found = complementary_pair(circuit.elements, node_of, list(self.transistors))
+        assert found is not None, f"{self.name} was not checked at load time"
+        npn, pnp, mid = found
+        return npn, pnp, circuit.nodes[mid]
+
+    def make_laws(self, circuit: Circuit) -> list[Law]:
+        """CP-DEMON laws; also makes both transistors' region unknown."""
+        npn, pnp, mid = self.members(circuit)
+        for transistor in (npn, pnp):
+            region = transistor.quantities["REGION", None]
+            region.value = region.justification = None
+        bases = [circuit.node_at(Terminal(t.name, "B")) for t in (npn, pnp)]
+        offset = self.ref("OFFSET")
+        return [Law("CP-DEMON", (n.ref("VOLTAGE"), offset), _cp_demon) for n in (mid, *bases)]
+
+
+@dataclass(eq=False)
+class ComplementaryPairBase(Part):
+    """One base equation of a complementary pair (see `ComplementaryPair`)."""
+
+    pair: ComplementaryPair | None = None
+    transistor: str = ""
+
+    def make_laws(self, circuit: Circuit) -> list[Law]:
+        assert self.pair is not None
+        npn, _, mid = self.pair.members(circuit)
+        base = circuit.node_at(Terminal(self.transistor, "B"))
+        sign = 1 if self.transistor == npn.name else -1
+        refs = (base.ref("VOLTAGE"), mid.ref("VOLTAGE"), self.pair.ref("OFFSET"))
+        return [Law("CP", refs, _cp_base(sign))]
+
+
+# Hint keyword -> builder of its macro-element (one or more parts) from the
+# names in the hint.
+HINT_TYPES: dict[str, Callable[[list[str]], list[Part]]] = {
+    "VD": lambda names: [VoltageDivider.from_hint(names)],
+    "CP": ComplementaryPair.from_hint,
 }
 
 

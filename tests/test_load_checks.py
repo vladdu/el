@@ -152,3 +152,51 @@ def test_vd_hint_on_resistors_in_parallel_is_rejected():
 
 def test_unknown_hint_is_a_load_error():
     assert kinds(rejected(hinted("(xx ra rb)"))) == ["MALFORMED"]
+
+
+# An NPN QN and a PNP QP whose emitters reach OUT through RE1 and RE2, plus
+# a second NPN QX and a resistor RB.
+PAIRED = """
+(wire pair
+  (node (vcc 20) (gnd 0) out)
+  (resistor (re1 10) (re2 10) (rb 1000))
+  (transistor (qn .6) (qp -.6) (qx .6))
+  (connect (vcc (c qn) (c qx) (#1 rb)) ((#2 rb) (b qn) (b qp) (b qx))
+           ((e qn) (#1 re1)) ((e qp) (#1 re2)) (out (#2 re1) (#2 re2) (e qx))
+           (gnd (c qp)))
+  (hint HINT))
+"""
+
+
+def paired(hint):
+    return PAIRED.replace("HINT", hint)
+
+
+def test_cp_hint_on_an_npn_and_a_pnp_whose_emitters_reach_a_common_node_passes():
+    for hint in ("(cp qn qp)", "(cp qp qn)"):
+        [result] = Session().run(paired(hint))
+        assert isinstance(result, Wired), result.render()
+
+
+def test_cp_hint_on_emitters_at_the_same_node_passes():
+    text = paired("(cp qx qp)").replace("((e qp) (#1 re2))", "((#1 re2))")
+    text = text.replace("(e qx))", "(e qx) (e qp))")
+    [result] = Session().run(text)
+    assert isinstance(result, Wired), result.render()
+
+
+def test_cp_hint_on_two_npns_is_rejected():
+    result = rejected(paired("(cp qn qx)"))
+    assert kinds(result) == ["BAD-HINT"]
+    assert "(CP QN QX)" in result.problems[0].message
+
+
+def test_cp_hint_naming_a_resistor_an_undeclared_part_or_not_two_parts_is_rejected():
+    for hint in ("(cp qn rb)", "(cp qn q9)", "(cp qn)", "(cp qn qp qx)"):
+        assert kinds(rejected(paired(hint))) == ["BAD-HINT"], hint
+
+
+def test_cp_hint_on_emitters_reaching_no_common_node_is_rejected():
+    text = paired("(cp qn qp)").replace("(out (#2 re1) (#2 re2) (e qx))", "(out (#2 re1) (e qx))")
+    text = text.replace("(gnd (c qp))", "(gnd (c qp) (#2 re2))")
+    assert kinds(rejected(text)) == ["BAD-HINT"]

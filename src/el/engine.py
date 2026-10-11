@@ -69,13 +69,16 @@ class Engine:
         self._agenda.append(part)
 
     def fill(self, ref: Ref, value: Value, justification: Justification) -> None:
-        """Fill `ref`'s quantity so that reading `ref` gives `value`."""
+        """Fill `ref`'s quantity so that reading `ref` gives `value`. A
+        hidden quantity (a complementary pair's offset) is filled like any
+        other but not listed in `fills`, so it is never printed."""
         quantity = ref.quantity
         quantity.value = ref.sign * value
         quantity.justification = justification
         for antecedent in justification.antecedents:
             antecedent.quantity.dependents.append(quantity)
-        self.fills.append(Fill(ref, value))
+        if not quantity.hidden:
+            self.fills.append(Fill(ref, value))
         for part in reversed(quantity.owners):
             self.wake(part)
 

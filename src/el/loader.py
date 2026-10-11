@@ -108,6 +108,6 @@ def _build(diagram: Diagram) -> Circuit:
         if connection.node is None:
             circuit.nodes[name] = Node(Symbol(name))
         circuit.nodes[name].terminals.extend(connection.terminals)
-    circuit.macros = [HINT_TYPES[h.kind](h.names) for h in diagram.hints]
+    circuit.macros = [part for h in diagram.hints for part in HINT_TYPES[h.kind](h.names)]
     circuit.make_laws()
     return circuit
