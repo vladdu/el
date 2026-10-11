@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Every fill records its Justification: the law and its antecedents; premises have no antecedents
 - [ ] `why` prints one line per quantity: `((Q) <= (antecedents) - LAW)`, premises as `GIVEN` (user) or `DEFAULT` (component model), ending with `QED`

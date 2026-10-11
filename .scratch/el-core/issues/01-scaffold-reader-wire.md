@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Python 3.14 project managed by uv, built with hatchling, src layout, package `el`; ruff and pytest configured; no runtime dependencies
 - [ ] A `Session` accepts command text and returns structured results that render to memo-style text; a REPL loop runs on top of it

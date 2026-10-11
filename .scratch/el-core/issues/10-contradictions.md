@@ -4,7 +4,7 @@
 
 **Blocked by:** 04, 06
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] A failed consistency check produces a structured contradiction report naming the conflicting quantities and including the justification of each
 - [ ] Propagation stops; circuit state is left as it was before the failed check

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Parts (nodes, resistors) own quantities; filling a quantity wakes the parts that own it via an explicit FIFO queue; propagation runs until the queue is empty
 - [ ] OHM law on resistors and KCL on nodes fill the last unfilled quantity when all others are filled

@@ -4,7 +4,7 @@
 
 **Blocked by:** 07
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Every fill records the quantities that depend on it
 - [ ] `change`: retract the premise and transitively everything depending on it (quantities, VARVALs); fill the new value; wake every part that owned a retracted quantity and every macro-element watching one; propagate

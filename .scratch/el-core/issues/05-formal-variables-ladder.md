@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Linear expressions: constant plus coefficients over formal variables; exact add/subtract/scale; rendered in memo `&+`/`&*` form
 - [ ] Laws compute with expressions, not just numbers

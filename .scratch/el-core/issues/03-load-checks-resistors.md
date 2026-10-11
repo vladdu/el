@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Error when a connection names a part that was never declared
 - [ ] Error when a declared part is never connected

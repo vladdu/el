@@ -1,6 +1,6 @@
 # Spec: EL core (1975 DC bias analyzer)
 
-Status: ready-for-agent
+Status: resolved
 
 Source: Sussman & Stallman, MIT AI Memo 328 (`ref/AIM-328.md` + `ref/figures/`). Vocabulary: `GLOSSARY.md`. Decisions: `docs/adr/`.
 
@@ -115,7 +115,7 @@ Contradictions are reported with explanations instead of failing silently.
   - **Linear expressions**: a constant plus a map from formal variable to coefficient, with exact arithmetic for add, subtract, scale, evaluate under known variable values, and solve for a single unknown. Renders as memo `&+`/`&*` form. Hand-written; no SymPy.
   - **Wiring-diagram loader**: turns a `wire` form into a circuit, applying every load-time check (stories 13-19) before anything is built. Names anonymous nodes NODE1..n in `connect` order.
   - **Circuit model**: parts (elements and nodes), the quantities each owns, and the laws attached to each part type:
-    - Node: KCL over its terminal currents, plus voltage.
+    - Node: KCL over its terminal currents, plus voltage. KCL applies only to nodes without a fixed voltage: a fixed node stands for a source, which supplies whatever current is needed.
     - Resistor: OHM over its terminal voltages, resistance and current. `ME` is current into `#1`, and the `#1` and `#2` currents are opposite.
     - Transistor:
       - BE law over base voltage, emitter voltage and VBE. It depends on operating region = ACTIVE.
@@ -123,7 +123,8 @@ Contradictions are reported with explanations instead of failing silently.
       - Base current is a Default of 0, and operating region is a Default of ACTIVE.
     - Macro-elements: `vd` (VD-DEMON) and `cp`, as described in stories 27-29.
   - **Engine**:
-    - Propagates with an explicit FIFO queue of parts to wake, running until the queue is empty.
+    - Propagates with an explicit LIFO stack of parts to wake (depth-first), running until the stack is empty. FIFO cannot reproduce the memo's intermediate expressions (e.g. the ladder's `(R2 CURRENT #1 (&+ 1.0 (&* -6.0 V3)))`) or its why trees; the memo's own account of the voltage divider (one resistor, then KCL at the midpoint, then the other resistor's consistency check) is a depth-first chain.
+    - When a node's voltage is filled, the parts at that node are woken in the order its `connect` entry lists them, with macro-elements last. This reproduces Example 1's why trees.
     - Fills quantities and records a justification (law plus antecedents) and the quantities that depend on each one.
     - When a law reads a quantity, the values of known formal variables are substituted in, and each one used is recorded as an antecedent. Stored expressions are not rewritten.
     - Runs consistency checks. Holds pending equations. Retracts. Detects contradictions.
@@ -145,7 +146,7 @@ Contradictions are reported with explanations instead of failing silently.
 ## Testing Decisions
 
 - **One seam: `Session`.** Every test drives `Session` with command text and inspects its structured results. Reader, Linear expressions, engine, laws and retraction are tested only through it. If a defect is hard to localize, a second seam at Linear expressions is the agreed fallback.
-- **Good tests check external behaviour only**: the quantities filled, their values, their `why` trees, contradiction reports, load errors and rendered text. Never queue order, internal data structures or private helpers.
+- **Good tests check external behaviour only**: the quantities filled, their values, their `why` trees, contradiction reports, load errors and rendered text. Never propagation order, internal data structures or private helpers.
 - **Golden tests from the memo**: each example's wiring diagram, commands and expected transcript are stored exactly as printed in the memo. Expected output is parsed with the same reader and compared structurally:
   - Values: relative tolerance 1e-5. Expressions compare coefficient by coefficient.
   - Formal variables: equal up to a consistent renaming.

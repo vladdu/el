@@ -4,7 +4,7 @@
 
 **Blocked by:** 07
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] `cp` hint creates a complementary-pair macro-element
 - [ ] Load-time check: `cp` must name one NPN and one PNP whose emitters reach a common node

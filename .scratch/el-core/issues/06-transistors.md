@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] `transistor` clause with signed VBE (`.6` NPN Si, `-.6` PNP Si, magnitude `.3` Ge); VBE is a Given
 - [ ] Terminals `b`, `e`, `c`, with currents into each terminal

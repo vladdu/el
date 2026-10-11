@@ -4,7 +4,7 @@
 
 **Blocked by:** 04, 05, 06
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] `hint` clause with `vd` creates a voltage-divider macro-element
 - [ ] Load-time check: `vd` must name two resistors sharing a node

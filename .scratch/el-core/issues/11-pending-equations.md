@@ -4,7 +4,7 @@
 
 **Blocked by:** 05, 08
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] An equation from a consistency check with more than one unsolved formal variable is stored as a pending equation
 - [ ] A pending equation is retried whenever one of its variables is solved, and solves the last variable when only one remains
