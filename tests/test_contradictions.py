@@ -84,7 +84,7 @@ CHAIN_QUANTITIES = [
 def test_after_a_contradiction_only_the_reported_fills_are_made():
     session, result = analyze(DEDUCED_CLASH, "chain")
     assert isinstance(result, Contradiction), result.render()
-    reported = {fill.render().rsplit(" ", 1)[0] + ")" for fill in result.fills}
+    reported = {f"({' '.join(fill.ref.name)})" for fill in result.fills}
     deduced = set()
     for name in CHAIN_QUANTITIES:
         [why] = session.run(f"(why {name})")
@@ -110,3 +110,36 @@ def test_given_voltages_agreeing_with_vbe_up_to_rounding_are_no_contradiction():
     # 2.0 - 1.4 is 0.6000000000000001 in floating point.
     _, result = analyze(BE_CLASH.replace("(emit 1)", "(emit 1.4)"), "clash")
     assert isinstance(result, Analysis), result.render()
+
+
+# Two transistors with their bases at BASE and their emitters at NODE1, with
+# different VBEs. Nothing fixes either voltage, so `analyze` deduces nothing
+# about them. `what base voltage` puts V1 at BASE; Q1's BE gives NODE1
+# V1 - 0.6, and Q2's BE check then needs V1 - V1 + 0.6 = 0.3: a contradiction
+# whatever V1 is.
+TWO_DROPS = """
+(wire drops
+  (node (vcc 10) base)
+  (transistor (q1 .6) (q2 .3))
+  (connect
+    (vcc (c q1) (c q2))
+    (base (b q1) (b q2))
+    ((e q1) (e q2))))
+"""
+
+
+def test_a_what_that_contradicts_is_undone():
+    session, analysis = analyze(TWO_DROPS, "drops")
+    assert isinstance(analysis, Analysis), analysis.render()
+    [result] = session.run("(what base voltage)")
+    assert isinstance(result, Contradiction), result.render()
+    assert result.law == "BE"
+    lines = result.render().splitlines()
+    assert "(BASE VOLTAGE V1)" in lines
+    assert lines[-1] == ";WHAT UNDONE: (BASE VOLTAGE) has no value"
+    for name in ("base voltage", "node1 voltage"):
+        [why] = session.run(f"(why {name})")
+        assert why.render() == f"({name.upper()}) has no value"
+    [again] = session.run("(what base voltage)")
+    assert isinstance(again, Contradiction), again.render()
+    assert "(BASE VOLTAGE V2)" in again.render().splitlines()

@@ -2,35 +2,30 @@
 
 `Session.run` takes command text (one or more forms) and returns one
 structured result per form. Results render to memo text; the REPL is a thin
-loop over this.
+loop over this. The work of `analyze`, `what` and `change` is done by
+`el.engine`; a session parses commands, words the engine's refusals and
+builds results.
 """
 
 import itertools
 from collections.abc import Callable
-from dataclasses import replace
 
 from el import engine
 from el.circuit import Circuit
-from el.expr import Expr, substitute
 from el.loader import WiringError, load
-from el.quantity import REGION, FormalVariable, Justification, PendingEquation, Ref
+from el.quantity import FormalVariable, Ref, why_steps
 from el.reader import QUOTE, Datum, ReadError, Symbol, read_all
 from el.results import (
     Analysis,
     Answer,
     Contradiction,
     Error,
-    Fill,
     LoadError,
-    ReportedEquation,
     Result,
     Unfilled,
     Why,
     Wired,
 )
-
-# The law recorded for a formal variable introduced by `what`.
-WHAT = "WHAT"
 
 
 class Session:
@@ -49,9 +44,6 @@ class Session:
     def new_variable(self) -> FormalVariable:
         """A fresh formal variable, V1, V2, ... in this session."""
         return FormalVariable(f"V{next(self._variable_numbers)}")
-
-    def _engine(self) -> engine.Engine:
-        return engine.Engine(self.new_variable)
 
     def run(self, text: str) -> list[Result]:
         try:
@@ -89,7 +81,7 @@ class Session:
             return Error(f"no circuit named {name}")
         self.current = circuit
         try:
-            fills = engine.propagate(circuit, self._engine())
+            fills = engine.analyze(circuit, self.new_variable)
         except engine.Contradicted as c:
             return _contradiction(circuit, c)
         return Analysis(circuit, fills)
@@ -121,16 +113,11 @@ class Session:
         if isinstance(found, Error):
             return found
         circuit, ref = found
-        fills = []
-        if not ref.filled:
-            run = self._engine()
-            run.fill(ref, Expr.variable(self.new_variable()), Justification(WHAT))
-            try:
-                fills = run.run()
-            except engine.Contradicted as c:
-                return _contradiction(circuit, c)
-        value, _ = substitute(ref.value)
-        return Answer(circuit, value, fills, _pending(value))
+        try:
+            value, fills, pending = engine.what(ref, self.new_variable)
+        except engine.Contradicted as c:
+            return _contradiction(circuit, c)
+        return Answer(circuit, value, fills, pending)
 
     def _why(self, form: list[Datum]) -> Result:
         """`(why part kind [label])` on the current circuit."""
@@ -138,7 +125,7 @@ class Session:
         if isinstance(found, Error):
             return found
         circuit, ref = found
-        return Why.of(circuit, ref) if ref.filled else Unfilled(ref)
+        return Why(circuit, why_steps(ref)) if ref.filled else Unfilled(ref)
 
     def _change(self, form: list[Datum]) -> Result:
         """`(change part kind [label] value)`: replace a premise's value
@@ -153,41 +140,23 @@ class Session:
         if isinstance(found, Error):
             return found
         circuit, ref = found
-        name = f"({' '.join(ref.name)})"
-        if ref.quantity.kind == REGION:
-            return Error(
-                f"{name} is an operating region; switching transistor models is not supported"
-            )
-        justification = ref.quantity.justification
-        if justification is None or not justification.is_premise:
-            how = "has no value" if justification is None else f"is deduced by {justification.law}"
-            return Error(f"{name} is not a premise: it {how}; only Givens and Defaults can change")
-        old = Fill(ref, ref.value)
-        restore = engine.snapshot(circuit)
         try:
-            fills = engine.change(self._engine(), ref, float(value))
+            fills = engine.change(ref, float(value), self.new_variable)
+        except engine.Refused as r:
+            return _refusal(r)
         except engine.Contradicted as c:
-            report = _contradiction(circuit, c)
-            restore()
-            return replace(report, undone=old)
+            return _contradiction(circuit, c)
         return Analysis(circuit, fills)
 
 
-def _pending(value: object) -> tuple[ReportedEquation, ...]:
-    """The pending equations in `value`'s unsolved variables that still have
-    more than one unsolved variable, each once, substituted."""
-    if not isinstance(value, Expr):
-        return ()
-    equations: list[PendingEquation] = []
-    for variable in value.variables:
-        equations += [e for e in variable.pending if e not in equations]
-    pending = []
-    for equation in equations:
-        expr, _ = substitute(equation.expr)
-        if isinstance(expr, Expr) and len(expr.variables) > 1:
-            pending.append(ReportedEquation(expr, equation.law.name))
-    return tuple(pending)
+def _refusal(refused: engine.Refused) -> Error:
+    name = f"({' '.join(refused.ref.name)})"
+    if isinstance(refused, engine.OperatingRegion):
+        return Error(f"{name} is an operating region; switching transistor models is not supported")
+    assert isinstance(refused, engine.NotAPremise)
+    how = "has no value" if refused.law is None else f"is deduced by {refused.law}"
+    return Error(f"{name} is not a premise: it {how}; only Givens and Defaults can change")
 
 
 def _contradiction(circuit: Circuit, c: engine.Contradicted) -> Contradiction:
-    return Contradiction.of(circuit, c.fills, c.law.name, c.law.refs)
+    return Contradiction(circuit, c.fills, c.law, c.conflicts, c.undone)

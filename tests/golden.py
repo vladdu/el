@@ -213,7 +213,8 @@ def assert_answer_matches(result, expected_text: str) -> None:
 
 
 # Why trees. Each line justifies one quantity: `((Q) <= ((A) (B) ...) - LAW)`
-# or, for a premise, `((Q) GIVEN)` / `((Q) DEFAULT)`; the tree ends in QED.
+# or, for a premise, `((Q) GIVEN)` / `((Q) DEFAULT)`, or for a supposition
+# `((Q) WHAT)`; the tree ends in QED.
 # Lines are keyed by the underlying quantity (so `(R4 CURRENT #1)` is the same
 # line as `(R4 CURRENT ME)`) and compared as law plus antecedent set; order is
 # ignored. DEFAULT counts as GIVEN. Formal variables, `(Vn VARVAL)`, have no
@@ -244,6 +245,8 @@ def _why_lines(circuit, text: str, side: str, collapse: bool = False) -> dict:
                 ants = frozenset(_why_key(circuit, a, collapse) for a in antecedents)
             case [name, "GIVEN" | "DEFAULT"]:
                 law, ants = PREMISE, frozenset()
+            case [name, "WHAT" as law]:
+                ants = frozenset()
             case _:
                 raise AssertionError(f"{side}: unreadable why line {_text(line)}")
         key = _why_key(circuit, name, collapse)

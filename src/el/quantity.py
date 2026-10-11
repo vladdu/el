@@ -10,6 +10,11 @@ does (`(R4 CURRENT ME ...)` from OHM, `(R3 CURRENT #2 ...)` from KCL).
 
 A `Law` is an equation over refs, given as a solver for each of them. A law
 whose refs are all filled but one fills that one (if its solver can).
+
+Only `el.engine` writes a quantity's state during a command, so it can undo
+every write. This module also holds what the engine reports about that
+state: fills, `why` trees, conflicts, pending equations, undone commands.
+`el.results` renders them.
 """
 
 from collections.abc import Callable
@@ -28,6 +33,8 @@ type Value = float | Expr
 
 GIVEN = "GIVEN"
 DEFAULT = "DEFAULT"
+# The law recorded for a supposition: the formal variable `what` introduces.
+WHAT = "WHAT"
 
 # A transistor's operating region quantity (ADR 0001) and its values. A
 # region-dependent law solves only when the region reads ACTIVE; a `cp` hint
@@ -40,7 +47,9 @@ UNKNOWN = "UNKNOWN"
 @dataclass(frozen=True)
 class Justification:
     """How a quantity was filled: by `law` from `antecedents` (the refs it
-    read), or as a premise (law GIVEN or DEFAULT, no antecedents)."""
+    read), as a premise (law GIVEN or DEFAULT, no antecedents), or as a
+    supposition (law WHAT, no antecedents). A law may also deduce a value
+    from no antecedents (KCL at a node with one terminal)."""
 
     law: str
     antecedents: tuple[Ref, ...] = ()
@@ -48,6 +57,10 @@ class Justification:
     @property
     def is_premise(self) -> bool:
         return self.law in (GIVEN, DEFAULT)
+
+    @property
+    def is_supposition(self) -> bool:
+        return self.law == WHAT
 
     def reads(self, quantity: Quantity) -> bool:
         """Whether `quantity` is one of the antecedents."""
@@ -61,9 +74,8 @@ class Quantity:
     Identity matters: two quantities are equal only if they are the same
     object. `owners` are the parts with a law over this quantity; filling it
     wakes them. `dependents` are the quantities and pending equations
-    whose fills read this one
-    (recorded by the engine; may be stale after a retraction, so check their
-    justification before trusting an entry). A `hidden` quantity (a
+    whose fills read this one (may be stale after a retraction, so check
+    their justification before trusting an entry). A `hidden` quantity (a
     transistor's operating region, ADR 0001) is recorded as an antecedent
     like any other but left out of `why` output."""
 
@@ -75,12 +87,6 @@ class Quantity:
     owners: list[Part] = field(default_factory=list)
     hidden: bool = False
     dependents: list[Quantity | PendingEquation] = field(default_factory=list)
-
-    def forget(self) -> None:
-        """Drop the value and justification (retraction)."""
-        self.value = None
-        self.justification = None
-        self.dependents = []
 
     @property
     def filled(self) -> bool:
@@ -117,22 +123,11 @@ class PendingEquation:
     whenever one of them is solved; it solves the last one when all others
     are. Its justification is the check (the law's refs plus the VARVALs
     substituted into it), so retracting any of those retracts it, like a
-    quantity (`el.engine.retract`). Nothing reads it and nothing is woken
-    when it goes."""
+    quantity. Nothing reads it and nothing is woken when it goes."""
 
     law: Law
     expr: Expr
     justification: Justification | None
-
-    def __post_init__(self) -> None:
-        for variable in self.expr.variables:
-            variable.pending.append(self)
-
-    def forget(self) -> None:
-        """Drop the equation (retraction)."""
-        self.justification = None
-        for variable in self.expr.variables:
-            variable.pending.remove(self)
 
     def __repr__(self) -> str:
         return f"PendingEquation({self.expr!r} = 0 - {self.law.name})"
@@ -196,3 +191,70 @@ class Law:
     name: str
     refs: tuple[Ref, ...]
     solve: Solver
+
+
+@dataclass(frozen=True)
+class Fill:
+    """One quantity filled, named by the ref the law used, e.g.
+    `(R3 CURRENT #2 -1.10638304E-3)`."""
+
+    ref: Ref
+    value: Value
+
+
+@dataclass(frozen=True)
+class Step:
+    """One line of a `why` tree: a quantity and how it was filled."""
+
+    ref: Ref
+    justification: Justification
+
+
+def printed_antecedents(justification: Justification) -> tuple[Ref, ...]:
+    """The antecedents `why` prints: hidden quantities (a transistor's
+    operating region, ADR 0001) are recorded but not shown."""
+    return tuple(a for a in justification.antecedents if not a.quantity.hidden)
+
+
+def why_steps(root: Ref) -> tuple[Step, ...]:
+    """The justification tree of the filled quantity `root`, as it is now:
+    one step per quantity, breadth first from `root`, each quantity once,
+    named as the first law that read it named it."""
+    steps: list[Step] = []
+    refs, seen = [root], {id(root.quantity)}
+    for ref in refs:  # `refs` grows while iterating: breadth first
+        justification = ref.quantity.justification
+        assert justification is not None, f"{ref} is not filled"
+        steps.append(Step(ref, justification))
+        for antecedent in printed_antecedents(justification):
+            if id(antecedent.quantity) not in seen:
+                seen.add(id(antecedent.quantity))
+                refs.append(antecedent)
+    return tuple(steps)
+
+
+@dataclass(frozen=True)
+class Conflict:
+    """One quantity of a failed check: its value and `why` tree then."""
+
+    fill: Fill
+    why: tuple[Step, ...]
+
+
+@dataclass(frozen=True)
+class ReportedEquation:
+    """A pending equation `expr = 0` from a check of law `law`, with known
+    formal variables substituted."""
+
+    expr: Value
+    law: str
+
+
+@dataclass(frozen=True)
+class Undone:
+    """A command undone after a contradiction: `command` (CHANGE or WHAT),
+    the quantity it targeted, and the value it has again (None: no value)."""
+
+    command: str
+    ref: Ref
+    value: Value | None

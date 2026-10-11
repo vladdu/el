@@ -128,7 +128,8 @@ Contradictions are reported with explanations instead of failing silently.
     - Fills quantities and records a justification (law plus antecedents) and the quantities that depend on each one.
     - When a law reads a quantity, the values of known formal variables are substituted in, and each one used is recorded as an antecedent. Stored expressions are not rewritten.
     - Runs consistency checks. Holds pending equations. Retracts. Detects contradictions.
-  - **Session**: the command interpreter for `wire`, `analyze`, `why`, `change`, `what`. Holds circuits by name and tracks the current circuit. Returns structured results that can render to memo text.
+    - Its interface is one function per command, `analyze`, `what` and `change`, each one transaction. It owns the premise rule (refusing a non-premise or an operating region), fresh formal variables, retract-wake-refill and undo on contradiction. It is the only code that writes quantity state during a command; every write is recorded on a trail, and undo replays the trail backwards.
+  - **Session**: the command interpreter for `wire`, `analyze`, `why`, `change`, `what`. Holds circuits by name and tracks the current circuit. Parses commands, words the engine's refusals, and returns structured results that can render to memo text. Result data (fills, `why` trees, conflicts) is built in the domain modules; the results module only renders.
   - **REPL/CLI**: a thin loop over Session.
 - **Premises**: a premise is either a Given (from the wiring diagram or `change`) or a Default (from a component model). Only premises may be `change`d.
 - **Operating region**: a hidden Default premise, per ADR 0001. It is recorded in the dependency graph and omitted from `why` output. A `cp` hint sets it to unknown.
@@ -139,8 +140,9 @@ Contradictions are reported with explanations instead of failing silently.
   3. Wake every part that owned a retracted quantity, and every macro-element watching one.
   4. Propagate.
   5. Report only the quantities that were filled again.
+  6. If propagation ends in a contradiction, report it as it stood at the failed check, then undo the whole change: the premise has its old value again and every retracted quantity, VARVAL and pending equation is back.
 - **Formal variables**: named `V<n>` from one counter per session. Names will not match the memo's.
-- **Contradictions**: a structured report listing the conflicting quantities and their justifications. The engine stops propagating, and the state stays as it was before the failed check.
+- **Contradictions**: a structured report listing the conflicting quantities and their justifications. The engine stops propagating. After `analyze` the state stays as it was before the failed check (its fills rest only on premises). A `change` or a `what` that ends in a contradiction is undone entirely; the report says so (`;CHANGE UNDONE: ...`, `;WHAT UNDONE: ... has no value`), since every fill a `what` makes rests on the formal variable it introduced, which `change` cannot retract.
 - **Floating point**: Python floats. The memo's single-precision artifacts (e.g. `0.60000002`) are not reproduced.
 
 ## Testing Decisions

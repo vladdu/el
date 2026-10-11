@@ -95,7 +95,7 @@ def test_a_law_reading_a_solved_variable_substitutes_it_and_cites_its_varval():
         why,
         """
         ((OUT VOLTAGE) <= ((NODE1 VOLTAGE) (R3 RESISTANCE) (R3 CURRENT ME) (V1 VARVAL)) - OHM)
-        ((NODE1 VOLTAGE) <= () - WHAT)
+        ((NODE1 VOLTAGE) WHAT)
         ((R3 RESISTANCE) GIVEN)
         ((R3 CURRENT ME) <= () - KCL)
         ((V1 VARVAL) <= ((NODE1 VOLTAGE) (GND VOLTAGE) (R2 RESISTANCE) (R2 CURRENT #1)) - OHM)
@@ -115,3 +115,12 @@ def test_what_without_a_circuit_or_on_an_unknown_quantity_is_an_error(ladder):
     assert isinstance(result, Error)
     [result] = ladder_session(ladder).run("(what r9 current)")
     assert isinstance(result, Error)
+
+
+def test_why_shows_a_supposition_like_a_premise_with_its_law(ladder):
+    session = ladder_session(ladder)
+    session.run("(what output voltage)")
+    [result] = session.run("(why output voltage)")
+    assert result.render() == "((OUTPUT VOLTAGE) WHAT)\nQED"
+    [result] = session.run("(why r6 current)")
+    assert "((OUTPUT VOLTAGE) WHAT)" in result.render().splitlines()

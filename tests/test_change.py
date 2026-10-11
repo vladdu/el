@@ -173,3 +173,71 @@ def test_change_refuses_an_operating_region():
     assert what.render() == "ACTIVE"
     [why] = session.run("(why node1 voltage)")
     assert why.render().splitlines()[0] == "((NODE1 VOLTAGE) <= ((BASE VOLTAGE) (Q1 VBE)) - BE)"
+
+
+def test_change_refuses_an_unfilled_quantity():
+    session = analyzed(COUPLED_AND_CLASH, "coupled")
+    [result] = session.run("(change output voltage 1.0)")
+    assert result.render() == (
+        ";ERROR: (OUTPUT VOLTAGE) is not a premise: it has no value;"
+        " only Givens and Defaults can change"
+    )
+
+
+# The pending-equation circuit (test_pending_equations.COUPLED) plus two
+# transistors with their bases at INPUT. Q2's emitter X tops a divider RX-RY
+# to GND (midpoint NODE4); Q3's emitter is held at 0.4 V, which agrees with
+# INPUT's 1.0. `what output voltage` leaves two pending equations. Changing
+# INPUT to 2.0 retracts them and everything below Q2's emitter. Depth first,
+# in INPUT's `connect` order: R1 reruns the pending checks; Q2 refills X, and
+# VD-DEMON puts a fresh variable at NODE4, solved by KCL there; then Q3's BE
+# check fails (2.0 - 0.4 is not 0.6).
+COUPLED_AND_CLASH = """
+(wire coupled
+  (node (gnd 0.0) (input 1.0) (vcc 5.0) (e3 0.4) x output)
+  (resistor (r1 1) (r2 2) (r3 1) (r4 2) (r5 1) (r6 1) (ra 1) (rb 1) (rx 1) (ry 1))
+  (transistor (q2 .6) (q3 .6))
+  (connect
+      (gnd (#2 r2) (#2 r4) (#2 r6) (#2 rb) (#2 ry))
+      (input (#1 r1) (b q2) (b q3))
+      ((#2 r1) (#1 r2) (#1 r3))          ;NODE1
+      ((#2 r3) (#1 r4) (#1 r5) (#1 ra))  ;NODE2
+      ((#2 ra) (#1 rb))                  ;NODE3
+      (x (e q2) (#1 rx))
+      ((#2 rx) (#1 ry))                  ;NODE4
+      (output (#2 r5) (#1 r6))
+      (vcc (c q2) (c q3))
+      (e3 (e q3)))
+  (hint (vd ra rb) (vd rx ry)))
+"""
+
+COUPLED_QUANTITIES = [
+    *(f"{n} voltage" for n in ("input", "node1", "node2", "node3", "node4", "x", "output")),
+    *(f"{r} current" for r in ("r1", "r2", "r3", "r4", "r5", "r6", "ra", "rb", "rx", "ry")),
+]
+
+
+def coupled_state(session: Session) -> dict[str, tuple[str, str]]:
+    """Each quantity's `why` tree and `what` answer (with pending equations)."""
+    out = {}
+    for name in COUPLED_QUANTITIES:
+        [why] = session.run(f"(why {name})")
+        [what] = session.run(f"(what {name})")
+        out[name] = (why.render(), what.render())
+    return out
+
+
+def test_a_change_that_makes_a_fresh_variable_and_pending_equations_then_contradicts_is_undone():
+    session = analyzed(COUPLED_AND_CLASH, "coupled")
+    [what] = session.run("(what output voltage)")
+    assert " = 0 - OHM)" in what.render()
+    before = coupled_state(session)
+    [result] = session.run("(change input voltage 2.0)")
+    assert isinstance(result, Contradiction), result.render()
+    lines = result.render().splitlines()
+    fresh = [line for line in lines if line.startswith("(NODE4 VOLTAGE V")]
+    assert fresh, "the change made no fresh variable before the contradiction"
+    assert any("VARVAL" in line for line in lines), "the change solved no variable"
+    assert any(line.startswith("(R2 CURRENT") for line in lines), "no pending check rerun"
+    assert lines[-1] == ";CHANGE UNDONE: (INPUT VOLTAGE) is still 1.0"
+    assert coupled_state(session) == before

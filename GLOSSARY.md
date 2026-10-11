@@ -36,7 +36,7 @@ One named electrical or parametric value of a single part of the circuit, e.g. t
 _Avoid_: slot, cell, parameter
 
 **Premise**:
-A filled quantity with no antecedents. It is either a Given or a Default, and it is the only kind of quantity that `change` may target.
+A Given or a Default: a filled quantity with no antecedents that the circuit's analysis rests on. Premises are the only quantities that `change` may target.
 _Avoid_: assumption (unqualified)
 
 **Given**:
@@ -46,8 +46,12 @@ A premise supplied by the user, such as a resistance or a node's fixed voltage.
 A premise supplied by a component model that encodes how designers normally use the component, e.g. a transistor's zero base current.
 _Avoid_: teleological assumption, intrinsic property
 
+**Supposition**:
+A quantity filled with a fresh formal variable because the user asked for its value with `what` while it had none ("wishful thinking"). Like a premise it has no antecedents, but it is not a premise: `change` may not target it.
+_Avoid_: assumption (unqualified), premise
+
 **Justification**:
-The record of how a quantity was filled: the law that filled it and its antecedents, which are the quantities that law read. A premise's justification has no antecedents.
+The record of how a quantity was filled: the law that filled it and its antecedents, which are the quantities that law read. The justification of a premise or a supposition has no antecedents.
 _Avoid_: reason, proof step
 
 **Operating region**:
