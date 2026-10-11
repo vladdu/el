@@ -49,6 +49,10 @@ class Justification:
     def is_premise(self) -> bool:
         return self.law in (GIVEN, DEFAULT)
 
+    def reads(self, quantity: Quantity) -> bool:
+        """Whether `quantity` is one of the antecedents."""
+        return any(a.quantity is quantity for a in self.antecedents)
+
 
 @dataclass(eq=False)
 class Quantity:
@@ -56,7 +60,8 @@ class Quantity:
 
     Identity matters: two quantities are equal only if they are the same
     object. `owners` are the parts with a law over this quantity; filling it
-    wakes them. `dependents` are the quantities whose fills read this one
+    wakes them. `dependents` are the quantities and pending equations
+    whose fills read this one
     (recorded by the engine; may be stale after a retraction, so check their
     justification before trusting an entry). A `hidden` quantity (a
     transistor's operating region, ADR 0001) is recorded as an antecedent
@@ -69,12 +74,7 @@ class Quantity:
     justification: Justification | None = None
     owners: list[Part] = field(default_factory=list)
     hidden: bool = False
-    dependents: list[Quantity] = field(default_factory=list)
-
-    def depends_on(self, quantity: Quantity) -> bool:
-        """Whether this quantity's current fill read `quantity`."""
-        j = self.justification
-        return j is not None and any(a.quantity is quantity for a in j.antecedents)
+    dependents: list[Quantity | PendingEquation] = field(default_factory=list)
 
     def forget(self) -> None:
         """Drop the value and justification (retraction)."""
@@ -117,22 +117,16 @@ class PendingEquation:
     whenever one of them is solved; it solves the last one when all others
     are. Its justification is the check (the law's refs plus the VARVALs
     substituted into it), so retracting any of those retracts it, like a
-    quantity (`el.engine.retract`). It has no owners: nothing is woken when it
-    goes."""
+    quantity (`el.engine.retract`). Nothing reads it and nothing is woken
+    when it goes."""
 
     law: Law
     expr: Expr
     justification: Justification | None
-    owners: list[Part] = field(default_factory=list)
-    dependents: list[Quantity] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         for variable in self.expr.variables:
             variable.pending.append(self)
-
-    def depends_on(self, quantity: Quantity) -> bool:
-        j = self.justification
-        return j is not None and any(a.quantity is quantity for a in j.antecedents)
 
     def forget(self) -> None:
         """Drop the equation (retraction)."""

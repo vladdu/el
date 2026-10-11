@@ -71,7 +71,7 @@ class Engine:
     """One propagation run. Collects the fills it makes, in order.
     `new_variable` makes a fresh formal variable (numbered per session)."""
 
-    def __init__(self, new_variable: Callable[[], FormalVariable] | None = None) -> None:
+    def __init__(self, new_variable: Callable[[], FormalVariable]) -> None:
         self.new_variable = new_variable
         self._agenda: list[Part] = []
         self._queued: set[int] = set()
@@ -214,18 +214,21 @@ def _varvals(variables: list[FormalVariable]) -> tuple[Ref, ...]:
     return tuple(Ref(v) for v in variables)
 
 
-def retract(quantity: Quantity) -> list[Quantity]:
+def retract(quantity: Quantity) -> list[Quantity | PendingEquation]:
     """Forget `quantity` and, transitively, everything whose fill depended on
     it (quantities and VARVALs alike). Returns the forgotten quantities,
-    `quantity` first. A dependent entry is followed only if that dependent's
-    current fill still reads the quantity (entries go stale when a quantity
-    is retracted and filled again from other antecedents)."""
-    retracted, todo = [], [quantity]
+    `quantity` first, and the pending equations they supported. A dependent
+    entry is followed only if that dependent's current fill still reads the
+    quantity (entries go stale when a quantity is retracted and filled again
+    from other antecedents)."""
+    retracted: list[Quantity | PendingEquation] = []
+    todo: list[Quantity | PendingEquation] = [quantity]
     while todo:
         q = todo.pop()
         if any(r is q for r in retracted):
             continue
-        todo.extend(d for d in q.dependents if d.depends_on(q))
+        if isinstance(q, Quantity):
+            todo.extend(d for d in q.dependents if d.justification and d.justification.reads(q))
         q.forget()
         retracted.append(q)
     return retracted
@@ -287,10 +290,9 @@ def snapshot(circuit: Circuit) -> Callable[[], None]:
     return restore
 
 
-def propagate(circuit: Circuit, engine: Engine | None = None) -> list[Fill]:
+def propagate(circuit: Circuit, engine: Engine) -> list[Fill]:
     """Wake every part and run local one-step deductions to quiescence;
     return the fills made. Raises `Contradicted` if a law fails its check."""
-    engine = engine or Engine()
     for part in reversed(circuit.parts()):
         engine.wake(part)
     return engine.run()
