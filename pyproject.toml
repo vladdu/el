@@ -3,6 +3,7 @@ name = "el"
 version = "0.1.0"
 description = "EL: heuristic DC bias circuit analyzer after Sussman & Stallman, MIT AI Memo 328"
 requires-python = ">=3.14"
+license = "MIT"
 dependencies = []
 
 [project.scripts]

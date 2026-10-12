@@ -10,3 +10,7 @@ uv run el
 - [Glossary](GLOSSARY.md): domain terms.
 - [ADRs](docs/adr/): design decisions.
 - [The memo](ref/AIM-328.md).
+
+## License
+
+MIT, see [LICENSE](LICENSE). The memo transcription and figures under `ref/` are not covered; see the note at the top of [ref/AIM-328.md](ref/AIM-328.md).
